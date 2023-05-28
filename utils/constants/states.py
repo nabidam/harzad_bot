@@ -1,0 +1,5 @@
+(   START_STATE,
+    FIRST_STATE,
+    SECOND_STATE,
+    FINAL_STATE,
+) = range(4)
