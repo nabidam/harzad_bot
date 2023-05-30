@@ -28,6 +28,4 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = HELLO.format(message=stringify_none_str(message), user_id=user_id, first_name=stringify_none_str(first_name), last_name=stringify_none_str(last_name), username=stringify_none_str(username))
     await send_md_msg(context.bot, update.effective_chat.id, message, keyboards.start_keyboard_rm)
 
-    message = STATE_INDICATOR.format(state="start")
-    await send_md_msg(context.bot, update.effective_chat.id, message, keyboards.start_keyboard_rm)
     return START_STATE

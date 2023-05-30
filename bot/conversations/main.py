@@ -1,5 +1,8 @@
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, filters
-from bot.handlers import start, first, second, final
+from bot.handlers import start, instagram
+from bot.handlers.instagram import main as instagram, before_download, download
+from bot.handlers.muisc import main as music
+from bot.handlers.muisc.spotify import main as spotify, download as spotify_download
 from utils import shared_handlers
 from utils.constants.keyboards import *
 
@@ -11,23 +14,25 @@ def main_conversation_handler():
         entry_points=[CommandHandler("start", start.handler)],
         states={
             START_STATE: [
-                MessageHandler(filters.Regex(f"^{FIRST_KEYBOARD}$"), first.handler),
+                MessageHandler(filters.Regex(f"^{INSTAGRAM_KEYBOARD}$"), instagram.handler),
+                MessageHandler(filters.Regex(f"^{MUSIC_KEYBOARD}$"), music.handler),
                 *shared_handlers.shared_handlers
             ],
-            FIRST_STATE: [
-                MessageHandler(filters.Regex(f"^{SECOND_KEYBOARD}$"), second.handler),
+
+            INSTAGRAM_STATE: [
+                MessageHandler(filters.Regex(f"^{INSTAGRAM_DOWNLOAD_KEYBOARD}$"), before_download.handler),
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 *shared_handlers.shared_handlers
             ],
-            SECOND_STATE: [
-                MessageHandler(filters.Regex(f"^{FINAL_KEYBOARD}$"), final.handler),
-                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), first.handler),
+            INSTAGRAM_DOWNLOAD_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), instagram.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.TEXT, download.handler),
                 *shared_handlers.shared_handlers
             ],
-            FINAL_STATE: [
-                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), second.handler),
-                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+
+            MUSIC_STATE: [
+                MessageHandler(filters.Regex(f"^{MUSIC_SPOTIFY_KEYBOARD}$"), instagram.handler),
                 *shared_handlers.shared_handlers
             ]
         },
