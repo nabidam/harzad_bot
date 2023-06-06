@@ -1,6 +1,8 @@
 from utils.constants.keyboards import *
 from telegram import ReplyKeyboardMarkup
 
+back_keyboard = [[BACK_KEYBOARD]]
+back_keyboard_rm = ReplyKeyboardMarkup(back_keyboard, resize_keyboard=True)
 
 start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD]]
 start_keyboard_rm = ReplyKeyboardMarkup(start_keyboard, resize_keyboard=True)

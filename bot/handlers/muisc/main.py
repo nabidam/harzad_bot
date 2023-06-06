@@ -3,6 +3,7 @@ from logging import getLogger
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
+from utils.constants.messages import CHOOSE_MESSAGE
 from utils.constants.states import MUSIC_STATE
 
 from utils.decorators import send_action
@@ -15,6 +16,5 @@ logger = getLogger(__name__)
 @send_action(ChatAction.TYPING)
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_chat is not None
-    message = "choose?"
-    await send_md_msg(context.bot, update.effective_chat.id, message, keyboards.music_state_keyboard_rm)
+    await send_md_msg(context.bot, update.effective_chat.id, CHOOSE_MESSAGE, keyboards.music_state_keyboard_rm)
     return MUSIC_STATE

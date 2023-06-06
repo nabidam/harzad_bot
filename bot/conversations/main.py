@@ -20,8 +20,9 @@ def main_conversation_handler():
             ],
 
             INSTAGRAM_STATE: [
-                MessageHandler(filters.Regex(f"^{INSTAGRAM_DOWNLOAD_KEYBOARD}$"), before_download.handler),
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{INSTAGRAM_DOWNLOAD_KEYBOARD}$"), before_download.handler),
                 *shared_handlers.shared_handlers
             ],
             INSTAGRAM_DOWNLOAD_STATE: [
@@ -32,6 +33,8 @@ def main_conversation_handler():
             ],
 
             MUSIC_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{MUSIC_SPOTIFY_KEYBOARD}$"), spotify.handler),
                 *shared_handlers.shared_handlers
             ],

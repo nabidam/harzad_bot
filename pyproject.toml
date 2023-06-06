@@ -13,6 +13,9 @@ sqlalchemy = "^2.0.15"
 alembic = "^1.11.1"
 spotdl = "^4.1.11"
 ffmpeg = "^1.4"
+instagrapi = "^1.17.10"
+validators = "^0.20.0"
+pillow = "^9.5.0"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.12.2"

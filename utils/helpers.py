@@ -1,7 +1,9 @@
 import os
+import random
 from telegram.constants import ParseMode
 
 import re
+from configurations.settings import PROXY_LIST
 
 from utils.constants import LOGIN
 
@@ -33,3 +35,10 @@ async def send_md_msg(bot, receiver, msg, keyboard = None):
     text = escape_md(msg)
 
     await bot.send_message(chat_id=receiver, text=text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+
+def next_proxy():
+    print(PROXY_LIST)
+    if PROXY_LIST is not None:
+        choice = random.choices(PROXY_LIST)
+        return choice[0]
+    return ""
