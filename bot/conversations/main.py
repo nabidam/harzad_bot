@@ -32,7 +32,11 @@ def main_conversation_handler():
             ],
 
             MUSIC_STATE: [
-                MessageHandler(filters.Regex(f"^{MUSIC_SPOTIFY_KEYBOARD}$"), instagram.handler),
+                MessageHandler(filters.Regex(f"^{MUSIC_SPOTIFY_KEYBOARD}$"), spotify.handler),
+                *shared_handlers.shared_handlers
+            ],
+            MUSIC_SPOTIFY_STATE: [
+                MessageHandler(filters.TEXT, spotify_download.handler),
                 *shared_handlers.shared_handlers
             ]
         },

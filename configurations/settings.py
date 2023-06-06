@@ -8,6 +8,8 @@ TOKEN = os.environ["TOKEN"]
 NAME = os.environ["BOT_NAME"]
 SQLITE = os.environ["SQLITE"]
 ADMINS = os.environ["ADMINS"].split(',')
+SPOTIFY_CLIENT_ID = os.environ["SPOTIFY_CLIENT_ID"]
+SPOTIFY_CLIENT_SECRET = os.environ["SPOTIFY_CLIENT_SECRET"]
 WEBHOOK = False
 # The following configuration is only needed if you setted WEBHOOK to True #
 WEBHOOK_OPTIONS = {
