@@ -204,3 +204,7 @@ INSTAGRAM_INSTRUCTION: str = """
 Please send me the url of the post/story/reels, to download.
 You can send me the username of a user in the format `@username`, to download the profile picture.
 """
+
+SPOTIFY_DOWNLOAD_PROGRESS: str = """
+Downloading {current}/{total} ...
+"""
