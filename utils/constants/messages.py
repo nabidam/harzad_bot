@@ -208,3 +208,12 @@ You can send me the username of a user in the format `@username`, to download th
 SPOTIFY_DOWNLOAD_PROGRESS: str = """
 Downloading {current}/{total} ...
 """
+
+SPOTIFY_INSTRUCTION: str = """
+Please send me the url of the song/album/playlist, to download.
+Sometimes some songs in a playlist does not have a public link to download, so I can't download it for you, sorry for that.
+"""
+
+TASK_DONE: str = """
+Your task is done 🥳
+"""

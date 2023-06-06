@@ -3,6 +3,7 @@ import os
 import signal
 import sys
 from importlib import import_module
+from datetime import datetime
 
 from telegram.ext import ApplicationBuilder, Application, PicklePersistence
 from bot.conversations.main import main_conversation_handler
@@ -15,7 +16,9 @@ import utils.logger as logger
 from spotdl import SpotifyClient
 
 if __name__ == "__main__":
-    logger.init_logger(f"logs/{settings.NAME}.log")
+    now = datetime.now()
+    strtime = now.strftime("%Y_%m_%d_%H_%M_%S")
+    logger.init_logger(f"logs/{settings.NAME}_{strtime}.log")
 
     create_requirement_folders()
     # SpotifyClient.init(

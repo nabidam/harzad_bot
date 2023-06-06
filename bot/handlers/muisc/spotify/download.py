@@ -9,7 +9,7 @@ from telegram.constants import ChatAction
 from connectors import spotdl
 from connectors.spotdl import create_spotdl_instance
 from utils.constants.keyboards import BACK_KEYBOARD
-from utils.constants.messages import GETTING_MEDIA_INFORMATION, PROCESSING, SPOTIFY_DOWNLOAD_PROGRESS
+from utils.constants.messages import GETTING_MEDIA_INFORMATION, PROCESSING, SPOTIFY_DOWNLOAD_PROGRESS, TASK_DONE
 from utils.constants.states import MUSIC_SPOTIFY_STATE, START_STATE
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID
 
@@ -95,6 +95,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except AssertionError:
                 pass
         
+        await context.bot.deleteMessage(
+            message_id=bot_message.message_id,
+            chat_id=update.message.chat_id,
+        )
+        
+        await context.bot.send_message(
+            chat_id=update.message.chat_id,
+            text=TASK_DONE,
+            reply_markup=keyboards.music_spotify_state_keyboard_rm,
+        )
         
         # songs = await await_download_from_spotify(message, update, context)
     # songs = spotdl.search([message])
