@@ -7,4 +7,8 @@
     MUSIC_SPOTIFY_STATE,
 
     PINTEREST_STATE,
-) = range(6)
+
+    YOUTUBE_STATE,
+    YOUTUBE_DOWNLOAD_STATE,
+    YOUTUBE_MP3_STATE,
+) = range(9)

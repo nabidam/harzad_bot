@@ -18,6 +18,7 @@ validators = "^0.20.0"
 pillow = "^9.5.0"
 yt-dlp = "^2023.3.4"
 moviepy = "^1.0.3"
+pydub = "^0.25.1"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.12.2"

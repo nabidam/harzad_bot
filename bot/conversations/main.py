@@ -2,6 +2,7 @@ from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, fi
 from bot.handlers import start, instagram
 from bot.handlers.instagram import main as instagram, before_download, download
 from bot.handlers.music import main as music
+from bot.handlers.youtube import main as youtube, before_download as youtube_before_download, before_mp3 as youtube_before_mp3, download as youtube_download, mp3 as youtube_mp3
 from bot.handlers.pinterest import main as pinterest, download as pinterest_download
 from bot.handlers.music.spotify import main as spotify, download as spotify_download
 from utils import shared_handlers
@@ -18,6 +19,7 @@ def main_conversation_handler():
                 MessageHandler(filters.Regex(f"^{INSTAGRAM_KEYBOARD}$"), instagram.handler),
                 MessageHandler(filters.Regex(f"^{MUSIC_KEYBOARD}$"), music.handler),
                 MessageHandler(filters.Regex(f"^{PINTEREST_KEYBOARD}$"), pinterest.handler),
+                MessageHandler(filters.Regex(f"^{YOUTUBE_KEYBOARD}$"), youtube.handler),
                 *shared_handlers.shared_handlers
             ],
 
@@ -51,6 +53,26 @@ def main_conversation_handler():
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, pinterest_download.handler),
+                *shared_handlers.shared_handlers
+            ],
+
+            YOUTUBE_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{YOUTUBE_DOWNLOAD_KEYBOARD}$"), youtube_before_download.handler),
+                MessageHandler(filters.Regex(f"^{YOUTUBE_MP3_KEYBOARD}$"), youtube_before_mp3.handler),
+                *shared_handlers.shared_handlers
+            ],
+            YOUTUBE_DOWNLOAD_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), youtube.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.TEXT, youtube_download.handler),
+                *shared_handlers.shared_handlers
+            ],
+            YOUTUBE_MP3_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), youtube.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.TEXT, youtube_mp3.handler),
                 *shared_handlers.shared_handlers
             ]
         },

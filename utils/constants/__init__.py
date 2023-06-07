@@ -20,3 +20,5 @@ MEDIA_REEL: int = 2
 MEDIA_ALBUM: int = 8
 
 PINTEREST_SEGMENT: str = "https://pin.it/"
+
+PLAYLIST: str = "playlist"

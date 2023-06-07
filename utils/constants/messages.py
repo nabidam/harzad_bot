@@ -229,3 +229,8 @@ Downloading and processing video ...
 INVALID_PINTEREST_URL: str = """
 Given url is invalid. the url should be start with `https://pin.it/`
 """
+
+YOUTUBE_INSTRUCTION: str = """
+Please send me the url of the video/playlist, to download.
+Sometimes some videos are not downloadable, so I can't download it for you, sorry for that.
+"""
