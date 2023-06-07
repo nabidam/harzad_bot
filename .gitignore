@@ -110,3 +110,6 @@ venv.bak/
 
 *.mp3
 login/*
+
+.env.dev
+.env.prod
