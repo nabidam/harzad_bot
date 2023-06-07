@@ -5,6 +5,7 @@ from logging import getLogger
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction, ParseMode
+from configurations.settings import DOWNLOAD_MP3_PATH
 from utils.constants import *
 from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import BOT_ID, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, INVALID_PINTEREST_URL, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
@@ -22,7 +23,7 @@ logger = getLogger(__name__)
 
 ydl_opts = {
     'format': 'bestaudio/best',
-    'outtmpl': 'mp3s/%(title)s.%(ext)s',
+    'outtmpl': DOWNLOAD_MP3_PATH + '%(title)s.%(ext)s',
     'restrictfilenames': True,
     # 'writethumbnail': True,
     'postprocessors': [{

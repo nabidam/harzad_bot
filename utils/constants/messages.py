@@ -234,3 +234,7 @@ YOUTUBE_INSTRUCTION: str = """
 Please send me the url of the video/playlist, to download.
 Sometimes some videos are not downloadable, so I can't download it for you, sorry for that.
 """
+
+DIRECT_VIDEO_LINK: str = """
+You can download the video using this link: {path}
+"""

@@ -3,9 +3,11 @@ import random
 from telegram.constants import ParseMode
 
 import re
-from configurations.settings import PROXY_LIST
+from configurations.settings import HOST_ROOT, HOSTNAME, PROXY_LIST
 
 from utils.constants import LOGIN
+
+import urllib.parse
 
 def create_requirement_folders():
     """create requirement folders"""
@@ -42,3 +44,7 @@ def next_proxy():
         choice = random.choices(PROXY_LIST)
         return choice[0]
     return ""
+
+def prepare_link(path):
+    # return urllib.parse.quote(url)
+    return (path.replace(HOST_ROOT, HOSTNAME)).replace(" ", "%20")
