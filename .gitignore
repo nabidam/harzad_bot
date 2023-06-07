@@ -109,6 +109,9 @@ venv.bak/
 *.db
 
 *.mp3
+*.mp4
+*.part
+*.ytdl
 login/*
 
 .env.dev

@@ -217,3 +217,15 @@ Sometimes some songs in a playlist does not have a public link to download, so I
 TASK_DONE: str = """
 Your task is done 🥳
 """
+
+PINTEREST_INSTRUCTION: str = """
+Please send me the url of the video on `pinterest`, to download.
+"""
+
+DOWNLOADING_VIDEO: str = """
+Downloading and processing video ...
+"""
+
+INVALID_PINTEREST_URL: str = """
+Given url is invalid. the url should be start with `https://pin.it/`
+"""

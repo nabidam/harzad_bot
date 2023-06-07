@@ -13,3 +13,5 @@ INSTAGRAM_DOWNLOAD_KEYBOARD: str = "Download"
 
 MUSIC_KEYBOARD: str = "Music 🎵"
 MUSIC_SPOTIFY_KEYBOARD: str = "Spotify"
+
+PINTEREST_KEYBOARD: str = "Pinterest"

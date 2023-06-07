@@ -4,7 +4,7 @@ from telegram import ReplyKeyboardMarkup
 back_keyboard = [[BACK_KEYBOARD]]
 back_keyboard_rm = ReplyKeyboardMarkup(back_keyboard, resize_keyboard=True)
 
-start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD]]
+start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD], [PINTEREST_KEYBOARD]]
 start_keyboard_rm = ReplyKeyboardMarkup(start_keyboard, resize_keyboard=True)
 
 instagram_state_keyboard = [[INSTAGRAM_DOWNLOAD_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
@@ -18,3 +18,6 @@ music_state_keyboard_rm = ReplyKeyboardMarkup(music_state_keyboard, resize_keybo
 
 music_spotify_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
 music_spotify_state_keyboard_rm = ReplyKeyboardMarkup(music_spotify_state_keyboard, resize_keyboard=True)
+
+pinterest_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
+pinterest_state_keyboard_rm = ReplyKeyboardMarkup(pinterest_state_keyboard, resize_keyboard=True)

@@ -5,4 +5,6 @@
 
     MUSIC_STATE,
     MUSIC_SPOTIFY_STATE,
-) = range(5)
+
+    PINTEREST_STATE,
+) = range(6)

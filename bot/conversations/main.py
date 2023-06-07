@@ -1,8 +1,9 @@
 from telegram.ext import ConversationHandler, CommandHandler, MessageHandler, filters
 from bot.handlers import start, instagram
 from bot.handlers.instagram import main as instagram, before_download, download
-from bot.handlers.muisc import main as music
-from bot.handlers.muisc.spotify import main as spotify, download as spotify_download
+from bot.handlers.music import main as music
+from bot.handlers.pinterest import main as pinterest, download as pinterest_download
+from bot.handlers.music.spotify import main as spotify, download as spotify_download
 from utils import shared_handlers
 from utils.constants.keyboards import *
 
@@ -16,6 +17,7 @@ def main_conversation_handler():
             START_STATE: [
                 MessageHandler(filters.Regex(f"^{INSTAGRAM_KEYBOARD}$"), instagram.handler),
                 MessageHandler(filters.Regex(f"^{MUSIC_KEYBOARD}$"), music.handler),
+                MessageHandler(filters.Regex(f"^{PINTEREST_KEYBOARD}$"), pinterest.handler),
                 *shared_handlers.shared_handlers
             ],
 
@@ -39,7 +41,16 @@ def main_conversation_handler():
                 *shared_handlers.shared_handlers
             ],
             MUSIC_SPOTIFY_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), music.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, spotify_download.handler),
+                *shared_handlers.shared_handlers
+            ],
+
+            PINTEREST_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.TEXT, pinterest_download.handler),
                 *shared_handlers.shared_handlers
             ]
         },
