@@ -82,7 +82,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 ydl.download([message])
                 
-                filename = "videos/" + title + "." + ext
+                ydl.process_info(info_dict)
+                title = info_dict.get('title')
+                ext = info_dict.get('ext')
+                filename = ydl.prepare_filename(info_dict)
                 thumbnail_url = info_dict.get("thumbnail")
                 with open(filename, "rb") as f:
                     video = mp.VideoFileClip(filename)
