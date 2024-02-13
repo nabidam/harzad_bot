@@ -4,7 +4,7 @@ from telegram import ReplyKeyboardMarkup
 back_keyboard = [[BACK_KEYBOARD]]
 back_keyboard_rm = ReplyKeyboardMarkup(back_keyboard, resize_keyboard=True)
 
-start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD], [PINTEREST_KEYBOARD], [YOUTUBE_KEYBOARD]]
+start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD], [PINTEREST_KEYBOARD], [YOUTUBE_KEYBOARD], [AI_KEYBOARD]]
 start_keyboard_rm = ReplyKeyboardMarkup(start_keyboard, resize_keyboard=True)
 
 instagram_state_keyboard = [[INSTAGRAM_DOWNLOAD_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
@@ -27,3 +27,6 @@ youtube_state_keyboard_rm = ReplyKeyboardMarkup(youtube_state_keyboard, resize_k
 
 youtube_download_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
 youtube_download_state_keyboard_rm = ReplyKeyboardMarkup(youtube_download_state_keyboard, resize_keyboard=True)
+
+ai_state_keyboard = [[], [BACK_KEYBOARD, HOME_KEYBOARD]]
+ai_state_keyboard_rm = ReplyKeyboardMarkup(ai_state_keyboard, resize_keyboard=True)
