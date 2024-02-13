@@ -238,3 +238,7 @@ Sometimes some videos are not downloadable, so I can't download it for you, sorr
 DIRECT_VIDEO_LINK: str = """
 You can download the video using this link: {path}
 """
+
+AI_CHAT_INSTRUCTION: str = """
+Start a conversation with bot :)
+"""
