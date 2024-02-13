@@ -29,6 +29,7 @@ ydl_opts = {
     # 'format': 'bestvideo[ext=mp4]+bestaudio/best',
     'format': 'bestvideo[ext=mp4]+bestaudio/best',
     'outtmpl': DOWNLOAD_VIDEO_PATH + '%(title)s.%(ext)s',
+    'cookiesfrombrowser': 'chrome',
     # 'writethumbnail': True,
     # 'postprocessors': [{
     #     'key': 'FFmpegExtractAudio',

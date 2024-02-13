@@ -20,6 +20,7 @@ def main_conversation_handler():
                 MessageHandler(filters.Regex(f"^{MUSIC_KEYBOARD}$"), music.handler),
                 MessageHandler(filters.Regex(f"^{PINTEREST_KEYBOARD}$"), pinterest.handler),
                 MessageHandler(filters.Regex(f"^{YOUTUBE_KEYBOARD}$"), youtube.handler),
+                MessageHandler(filters.Regex(f"^{AI_KEYBOARD}$"), youtube.handler),
                 *shared_handlers.shared_handlers
             ],
 

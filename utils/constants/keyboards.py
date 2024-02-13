@@ -19,3 +19,5 @@ PINTEREST_KEYBOARD: str = "Pinterest"
 YOUTUBE_KEYBOARD: str = "Youtube 🎞"
 YOUTUBE_DOWNLOAD_KEYBOARD: str = "Download as video"
 YOUTUBE_MP3_KEYBOARD: str = "Download as mp3"
+
+AI_KEYBOARD: str = "AI 🤖"
