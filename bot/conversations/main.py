@@ -75,7 +75,12 @@ def main_conversation_handler():
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, youtube_mp3.handler),
                 *shared_handlers.shared_handlers
-            ]
+            ],
+            AI_STATE: [
+                MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
+                MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
+                *shared_handlers.shared_handlers
+            ],
         },
         fallbacks=[],
         name="main_handler",

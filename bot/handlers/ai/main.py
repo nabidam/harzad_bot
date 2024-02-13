@@ -16,5 +16,5 @@ logger = getLogger(__name__)
 @send_action(ChatAction.TYPING)
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_chat is not None
-    await send_md_msg(context.bot, update.effective_chat.id, CHOOSE_MESSAGE, keyboards.youtube_state_keyboard_rm)
+    await send_md_msg(context.bot, update.effective_chat.id, CHOOSE_MESSAGE, keyboards.ai_state_keyboard)
     return AI_STATE
