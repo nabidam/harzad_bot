@@ -28,3 +28,6 @@ WEBHOOK_OPTIONS = {
     # making fake updates to your bot
     "webhook_url": f"https://example.com/{TOKEN}",
 }
+
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+HF_TOKEN = os.environ["HF_TOKEN"]
