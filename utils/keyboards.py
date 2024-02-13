@@ -1,15 +1,32 @@
-from utils.constants.keyboards import BACK_KEYBOARD, FIRST_KEYBOARD, SECOND_KEYBOARD, FINAL_KEYBOARD, HOME_KEYBOARD
+from utils.constants.keyboards import *
 from telegram import ReplyKeyboardMarkup
 
+back_keyboard = [[BACK_KEYBOARD]]
+back_keyboard_rm = ReplyKeyboardMarkup(back_keyboard, resize_keyboard=True)
 
-start_keyboard = [[FIRST_KEYBOARD]]
+start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD], [PINTEREST_KEYBOARD], [YOUTUBE_KEYBOARD], [AI_KEYBOARD]]
 start_keyboard_rm = ReplyKeyboardMarkup(start_keyboard, resize_keyboard=True)
 
-first_state_keyboard = [[SECOND_KEYBOARD], [BACK_KEYBOARD]]
-first_state_keyboard_rm = ReplyKeyboardMarkup(first_state_keyboard, resize_keyboard=True)
+instagram_state_keyboard = [[INSTAGRAM_DOWNLOAD_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
+instagram_state_keyboard_rm = ReplyKeyboardMarkup(instagram_state_keyboard, resize_keyboard=True)
 
-second_state_keyboard = [[FINAL_KEYBOARD], [BACK_KEYBOARD], [HOME_KEYBOARD]]
-second_state_keyboard_rm = ReplyKeyboardMarkup(second_state_keyboard, resize_keyboard=True)
+instagram_download_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
+instagram_download_state_keyboard_rm = ReplyKeyboardMarkup(instagram_download_state_keyboard, resize_keyboard=True)
 
-final_state_keyboard = [[BACK_KEYBOARD], [HOME_KEYBOARD]]
-final_state_keyboard_rm = ReplyKeyboardMarkup(final_state_keyboard, resize_keyboard=True)
+music_state_keyboard = [[MUSIC_SPOTIFY_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
+music_state_keyboard_rm = ReplyKeyboardMarkup(music_state_keyboard, resize_keyboard=True)
+
+music_spotify_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
+music_spotify_state_keyboard_rm = ReplyKeyboardMarkup(music_spotify_state_keyboard, resize_keyboard=True)
+
+pinterest_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
+pinterest_state_keyboard_rm = ReplyKeyboardMarkup(pinterest_state_keyboard, resize_keyboard=True)
+
+youtube_state_keyboard = [[YOUTUBE_DOWNLOAD_KEYBOARD, YOUTUBE_MP3_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
+youtube_state_keyboard_rm = ReplyKeyboardMarkup(youtube_state_keyboard, resize_keyboard=True)
+
+youtube_download_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
+youtube_download_state_keyboard_rm = ReplyKeyboardMarkup(youtube_download_state_keyboard, resize_keyboard=True)
+
+ai_state_keyboard = [[], [BACK_KEYBOARD, HOME_KEYBOARD]]
+ai_state_keyboard_rm = ReplyKeyboardMarkup(ai_state_keyboard, resize_keyboard=True)

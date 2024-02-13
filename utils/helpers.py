@@ -1,9 +1,13 @@
 import os
+import random
 from telegram.constants import ParseMode
 
 import re
+from configurations.settings import HOST_ROOT, HOSTNAME, PROXY_LIST
 
 from utils.constants import LOGIN
+
+import urllib.parse
 
 def create_requirement_folders():
     """create requirement folders"""
@@ -33,3 +37,14 @@ async def send_md_msg(bot, receiver, msg, keyboard = None):
     text = escape_md(msg)
 
     await bot.send_message(chat_id=receiver, text=text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+
+def next_proxy():
+    print(PROXY_LIST)
+    if PROXY_LIST is not None:
+        choice = random.choices(PROXY_LIST)
+        return choice[0]
+    return ""
+
+def prepare_link(path):
+    # return urllib.parse.quote(url)
+    return (path.replace(HOST_ROOT, HOSTNAME)).replace(" ", "%20")

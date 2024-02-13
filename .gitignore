@@ -107,3 +107,12 @@ venv.bak/
 .vscode/
 
 *.db
+
+*.mp3
+*.mp4
+*.part
+*.ytdl
+login/*
+
+.env.dev
+.env.prod

@@ -9,6 +9,7 @@ def init_logger(logfile: str):
     )
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
+    # root_logger.setLevel(logging.ERROR)
 
     file_handler = logging.FileHandler(logfile)
     file_handler.setFormatter(log_formatter)

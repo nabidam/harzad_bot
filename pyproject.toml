@@ -6,11 +6,19 @@ authors = ["Ale Sanchez Medina <alesanchezmedina@gmail.com>"]
 license = "The Unlicense"
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = ">=3.8,<3.12"
 python-telegram-bot = "^20.3"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.15"
 alembic = "^1.11.1"
+spotdl = "^4.1.11"
+ffmpeg = "^1.4"
+instagrapi = "^1.17.10"
+validators = "^0.20.0"
+pillow = "^9.5.0"
+yt-dlp = "^2023.3.4"
+moviepy = "^1.0.3"
+pydub = "^0.25.1"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.12.2"
