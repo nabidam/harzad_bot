@@ -242,3 +242,15 @@ You can download the video using this link: {path}
 AI_CHAT_INSTRUCTION: str = """
 Start a conversation with bot :)
 """
+
+AI_TTI_INSTRUCTION: str = """
+Write a prompt to generate an image according to that text, for example `an iguana on the beach` or a complicated one `painting of girl from behind looking a fleet of imperial ships in the sky, in a meadow of flowers by donato giancola and Eddie Mendoza, elegant, dynamic lighting, beautiful, poster, trending on artstation, poster, anato finnstark, wallpaper, 4 k, award winning, digital art, imperial colors, fantastic view`.
+"""
+
+AI_PROMPT_FOR_CAPTION: str = """
+prompt: `{prompt}`
+"""
+
+COMMING_SOON: str = """
+This tool is going to be available in a near future... ❤️
+"""

@@ -22,3 +22,4 @@ YOUTUBE_MP3_KEYBOARD: str = "Download as mp3"
 
 AI_KEYBOARD: str = "AI 🤖"
 AI_CHAT_KEYBOARD: str = "Chat 💬"
+AI_TTI_KEYBOARD: str = "Text to image 🖼"

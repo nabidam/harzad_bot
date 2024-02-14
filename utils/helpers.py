@@ -1,6 +1,7 @@
 import os
 import random
 from telegram.constants import ParseMode
+from telegram.ext import ExtBot
 
 import re
 from configurations.settings import HOST_ROOT, HOSTNAME, PROXY_LIST
@@ -37,6 +38,9 @@ async def send_md_msg(bot, receiver, msg, keyboard = None):
     text = escape_md(msg)
 
     await bot.send_message(chat_id=receiver, text=text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+    
+async def send_image(bot: ExtBot, receiver, image, caption = None, keyboard = None):
+    await bot.send_photo(chat_id=receiver, photo=image, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
 
 def next_proxy():
     print(PROXY_LIST)

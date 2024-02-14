@@ -13,5 +13,6 @@
     YOUTUBE_MP3_STATE,
     
     AI_STATE,
-    AI_CHAT_STATE
-) = range(11)
+    AI_CHAT_STATE,
+    AI_TTI_STATE
+) = range(12)
