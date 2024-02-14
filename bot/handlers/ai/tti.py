@@ -11,7 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
 from utils.constants import *
-from utils.constants.messages import PROCESSING
+from utils.constants.messages import AI_PROMPT_FOR_CAPTION, PROCESSING
 from utils.constants.states import AI_TTI_STATE
 
 from utils.decorators import send_action, sync_user
@@ -48,6 +48,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.message.chat_id,
     )
     
-    await send_image(context.bot, update.effective_chat.id, replicate_response[0], keyboards.ai_chat_state_keyboard_rm)
+    caption = AI_PROMPT_FOR_CAPTION.format(prompt=message)
+    await send_image(context.bot, update.effective_chat.id, replicate_response[0], caption, keyboards.ai_chat_state_keyboard_rm)
     
     return AI_TTI_STATE

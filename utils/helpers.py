@@ -39,8 +39,8 @@ async def send_md_msg(bot, receiver, msg, keyboard = None):
 
     await bot.send_message(chat_id=receiver, text=text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
     
-async def send_image(bot: ExtBot, receiver, image, keyboard = None):
-    await bot.send_photo(chat_id=receiver, photo=image, reply_markup=keyboard)
+async def send_image(bot: ExtBot, receiver, image, caption = None, keyboard = None):
+    await bot.send_photo(chat_id=receiver, photo=image, caption=caption, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
 
 def next_proxy():
     print(PROXY_LIST)
