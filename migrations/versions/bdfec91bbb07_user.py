@@ -1,19 +1,21 @@
 """user
 
-Revision ID: 45e412a5a4d7
+Revision ID: bdfec91bbb07
 Revises: 
-Create Date: 2023-05-28 13:12:02.046321
+Create Date: 2024-02-14 09:07:53.524945
 
 """
+from typing import Sequence, Union
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 
 # revision identifiers, used by Alembic.
-revision = '45e412a5a4d7'
-down_revision = None
-branch_labels = None
-depends_on = None
+revision: str = 'bdfec91bbb07'
+down_revision: Union[str, None] = None
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
@@ -25,8 +27,8 @@ def upgrade() -> None:
     sa.Column('fist_name', sa.String(length=255), nullable=True),
     sa.Column('last_name', sa.String(length=255), nullable=True),
     sa.Column('details', sa.JSON(), nullable=True),
-    sa.Column('last_login', sa.DATETIME(), nullable=True),
-    sa.Column('created_on', sa.TIMESTAMP(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('last_login', sa.TIMESTAMP(), nullable=True),
+    sa.Column('created_on', sa.TIMESTAMP(), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     # ### end Alembic commands ###
