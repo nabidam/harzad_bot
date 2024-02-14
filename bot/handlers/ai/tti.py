@@ -5,29 +5,24 @@ from langchain.prompts import PromptTemplate
 import validators
 import re
 from logging import getLogger
+import replicate
 
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.constants import ChatAction, ParseMode
-from configurations.settings import DOWNLOAD_VIDEO_PATH, HOST_ROOT, HOSTNAME, OPENAI_API_KEY
+from telegram.constants import ChatAction
 from utils.constants import *
-from utils.constants.keyboards import BACK_KEYBOARD
-from utils.constants.messages import BOT_ID, DIRECT_VIDEO_LINK, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, INVALID_PINTEREST_URL, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
-from utils.constants.states import AI_CHAT_STATE
+from utils.constants.messages import PROCESSING
+from utils.constants.states import AI_TTI_STATE
 
 from utils.decorators import send_action, sync_user
-from utils.exceptions.instagram import LoginException
-from utils.helpers import escape_md, prepare_link, send_md_msg
+from utils.helpers import escape_md, prepare_link, send_image, send_md_msg
 from utils import keyboards
 
 # Init logger
 logger = getLogger(__name__)
 
-template = """You are a friendly chatbot, response to user's message with a friendly tone.
-User message: {message}"""
-prompt = PromptTemplate(template=template, input_variables=["message"])
-llm = ChatOpenAI(model='gpt-3.5-turbo')
-chain = LLMChain(prompt=prompt, llm=llm)
+repo_id = "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b"
+# repo_id = "ai-forever/kandinsky-2.2:ea1addaab376f4dc227f5368bbd8eff901820fd1cc14ed8cad63b29249e9d463"
 
 @send_action(ChatAction.TYPING)
 @sync_user
@@ -42,11 +37,17 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_user is not None
 
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+    bot_message = await context.bot.send_message(chat_id=update.message.chat_id, text=PROCESSING)
     
-    llm_response = chain.invoke({"message": message})
+    replicate_response = replicate.run(repo_id,input={"prompt": message})
     
-    print(llm_response)
+    print(replicate_response)
     
-    await send_md_msg(context.bot, update.effective_chat.id, llm_response["text"], keyboards.ai_chat_state_keyboard_rm)
+    await context.bot.deleteMessage(
+        message_id=bot_message.message_id,
+        chat_id=update.message.chat_id,
+    )
     
-    return AI_CHAT_STATE
+    await send_image(context.bot, update.effective_chat.id, replicate_response[0], keyboards.ai_chat_state_keyboard_rm)
+    
+    return AI_TTI_STATE
