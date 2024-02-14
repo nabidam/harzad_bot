@@ -28,8 +28,11 @@ youtube_state_keyboard_rm = ReplyKeyboardMarkup(youtube_state_keyboard, resize_k
 youtube_download_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
 youtube_download_state_keyboard_rm = ReplyKeyboardMarkup(youtube_download_state_keyboard, resize_keyboard=True)
 
-ai_state_keyboard = [[AI_CHAT_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
+ai_state_keyboard = [[AI_CHAT_KEYBOARD, AI_TTI_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
 ai_state_keyboard_rm = ReplyKeyboardMarkup(ai_state_keyboard, resize_keyboard=True)
 
 ai_chat_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
 ai_chat_state_keyboard_rm = ReplyKeyboardMarkup(ai_chat_state_keyboard, resize_keyboard=True)
+
+ai_tti_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
+ai_tti_state_keyboard_rm = ReplyKeyboardMarkup(ai_tti_state_keyboard, resize_keyboard=True)

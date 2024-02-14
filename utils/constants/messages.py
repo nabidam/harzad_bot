@@ -242,3 +242,7 @@ You can download the video using this link: {path}
 AI_CHAT_INSTRUCTION: str = """
 Start a conversation with bot :)
 """
+
+AI_TTI_INSTRUCTION: str = """
+Write a prompt to generate an image according to that text, for example `an iguana on the beach`.
+"""

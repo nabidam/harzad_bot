@@ -20,11 +20,6 @@ from utils.exceptions.instagram import LoginException
 from utils.helpers import escape_md, prepare_link, send_md_msg
 from utils import keyboards
 
-from utils.instagram import get_user_client_instagram
-
-from yt_dlp import YoutubeDL, utils
-import moviepy.editor as mp
-
 # Init logger
 logger = getLogger(__name__)
 
