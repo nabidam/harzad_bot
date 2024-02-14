@@ -24,6 +24,7 @@ langchain-community = "^0.0.19"
 langchain-core = "^0.1.22"
 langchain-openai = "^0.0.5"
 psycopg2-binary = "^2.9.9"
+replicate = "^0.23.1"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.12.2"
