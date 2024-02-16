@@ -6,7 +6,7 @@ from telegram.constants import ChatAction
 from utils.constants.messages import HELLO, STATE_INDICATOR
 from utils.constants.states import START_STATE
 
-from utils.decorators import send_action, sync_user
+from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import send_md_msg, stringify_none_str
 from utils import keyboards
 
@@ -15,6 +15,7 @@ logger = getLogger(__name__)
 
 @send_action(ChatAction.TYPING)
 @sync_user
+@log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process a /start command."""
     assert update.message is not None

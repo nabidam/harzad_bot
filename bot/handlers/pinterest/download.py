@@ -11,7 +11,7 @@ from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import BOT_ID, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, INVALID_PINTEREST_URL, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
 from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PINTEREST_STATE
 
-from utils.decorators import send_action, sync_user
+from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
 from utils.helpers import escape_md, send_md_msg
 from utils import keyboards
@@ -41,6 +41,7 @@ ydl_opts = {
 
 @send_action(ChatAction.TYPING)
 @sync_user
+@log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
     message = update.message.text

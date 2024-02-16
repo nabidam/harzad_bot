@@ -16,7 +16,7 @@ from utils.constants import *
 from utils.constants.messages import AI_PROMPT_FOR_CAPTION, PROCESSING
 from utils.constants.states import AI_TTI_STATE
 
-from utils.decorators import send_action, sync_user
+from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import escape_md, prepare_link, send_image, send_md_msg
 from utils import keyboards
 
@@ -33,6 +33,7 @@ model = "stabilityai/stable-diffusion-xl-base-1.0"
 
 @send_action(ChatAction.TYPING)
 @sync_user
+@log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
     message = update.message.text
