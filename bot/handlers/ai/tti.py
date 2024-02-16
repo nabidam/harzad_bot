@@ -26,6 +26,10 @@ logger = getLogger(__name__)
 together.api_key = TOGETHER_API_KEY
 
 model = "stabilityai/stable-diffusion-xl-base-1.0"
+# model = "prompthero/openjourney"
+# model = "stabilityai/stable-diffusion-2-1"
+# model = "SG161222/Realistic_Vision_V3.0_VAE"
+# model = "wavymulder/Analog-Diffusion"
 
 @send_action(ChatAction.TYPING)
 @sync_user
