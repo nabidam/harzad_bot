@@ -5,13 +5,11 @@ from langchain.prompts import PromptTemplate
 import validators
 import re
 from logging import getLogger
-import together
-import base64
+import replicate
 
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
-from configurations.settings import TOGETHER_API_KEY
 from utils.constants import *
 from utils.constants.messages import AI_PROMPT_FOR_CAPTION, PROCESSING
 from utils.constants.states import AI_TTI_STATE
@@ -23,9 +21,8 @@ from utils import keyboards
 # Init logger
 logger = getLogger(__name__)
 
-together.api_key = TOGETHER_API_KEY
-
-model = "stabilityai/stable-diffusion-xl-base-1.0"
+repo_id = "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b"
+# repo_id = "ai-forever/kandinsky-2.2:ea1addaab376f4dc227f5368bbd8eff901820fd1cc14ed8cad63b29249e9d463"
 
 @send_action(ChatAction.TYPING)
 @sync_user
@@ -42,19 +39,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     bot_message = await context.bot.send_message(chat_id=update.message.chat_id, text=PROCESSING)
     
-    together_response = together.Image.create(
-        prompt = message, 
-        model = model, 
-        width= 512,
-        height= 512,
-        steps= 40,
-        seed= 6616
-    )
+    replicate_response = replicate.run(repo_id,input={"prompt": message})
     
-    print(together_response)
-    
-    image = together_response["output"]["choices"][0]
-    image_content = base64.b64decode(image["image_base64"])
+    print(replicate_response)
     
     await context.bot.deleteMessage(
         message_id=bot_message.message_id,
@@ -62,6 +49,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     caption = AI_PROMPT_FOR_CAPTION.format(prompt=message)
-    await send_image(context.bot, update.effective_chat.id, image_content, caption, keyboards.ai_chat_state_keyboard_rm)
+    await send_image(context.bot, update.effective_chat.id, replicate_response[0], caption, keyboards.ai_chat_state_keyboard_rm)
     
     return AI_TTI_STATE

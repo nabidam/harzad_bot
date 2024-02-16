@@ -32,5 +32,6 @@ WEBHOOK_OPTIONS = {
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 HF_TOKEN = os.environ["HF_TOKEN"]
 REPLICATE_API_TOKEN = os.environ["REPLICATE_API_TOKEN"]
+TOGETHER_API_KEY = os.environ["TOGETHER_API_KEY"]
 
 DB_URI = os.environ["DB_URI"]
