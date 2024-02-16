@@ -17,9 +17,9 @@ logger = getLogger(__name__)
 @sync_user
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_chat is not None
-    # TODO: comming soon
-    await send_md_msg(context.bot, update.effective_chat.id, COMMING_SOON, keyboards.ai_state_keyboard_rm)
-    return AI_STATE
+    # # TODO: comming soon
+    # await send_md_msg(context.bot, update.effective_chat.id, COMMING_SOON, keyboards.ai_state_keyboard_rm)
+    # return AI_STATE
     
-    # await send_md_msg(context.bot, update.effective_chat.id, AI_TTI_INSTRUCTION, keyboards.ai_tti_state_keyboard_rm)
-    # return AI_TTI_STATE
+    await send_md_msg(context.bot, update.effective_chat.id, AI_TTI_INSTRUCTION, keyboards.ai_tti_state_keyboard_rm)
+    return AI_TTI_STATE
