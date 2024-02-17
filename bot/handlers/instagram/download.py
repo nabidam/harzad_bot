@@ -10,9 +10,9 @@ from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import BOT_ID, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
 from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE
 
-from utils.decorators import send_action
+from utils.decorators import send_action,sync_user , log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import send_md_msg
+from utils.helpers import send_image, send_md_msg
 from utils import keyboards
 
 from instagrapi.exceptions import MediaNotFound
@@ -25,6 +25,8 @@ from utils.instagram import get_user_client_instagram
 logger = getLogger(__name__)
 
 @send_action(ChatAction.TYPING)
+@sync_user
+@log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
     message = update.message.text
@@ -91,7 +93,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=update.message.chat_id,
                 text=GETTING_MEDIA_INFORMATION,
             )
-            media_info = client.media_info(media_pk_from_url).dict()
+            media_info = client.media_info(media_pk_from_url).model_dump()
             media_type = media_info["media_type"]
             product_type = media_info["product_type"]
         except (MediaNotFound, UnknownError, ValueError):
@@ -145,7 +147,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(
                 chat_id=update.effective_message.chat_id,
                 action=ChatAction.UPLOAD_PHOTO)
-            await update.effective_user.send_photo(photo=media_info["thumbnail_url"])
+            
+            try:
+                await update.effective_user.send_photo(photo=str(media_info["thumbnail_url"]))
+            except:
+                await update.effective_user.send_document(
+                    document=str(media_info["thumbnail_url"]), reply_markup=keyboards.instagram_download_state_keyboard_rm)
+            
             caption = MEDIA_CAPTION.format(
                     caption=media_info["caption_text"],
                     bot_id=BOT_ID,
@@ -162,7 +170,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(
                 chat_id=update.effective_message.chat_id,
                 action=ChatAction.UPLOAD_VIDEO)
-            await update.effective_user.send_video(video=media_info["video_url"])
+            
+            try:
+                await update.effective_user.send_video(video=str(media_info["video_url"]))
+            except:
+                await update.effective_user.send_document(
+                    document=str(media_info["video_url"]), reply_markup=keyboards.instagram_download_state_keyboard_rm)
+                
             caption = MEDIA_CAPTION.format(
                     caption=media_info["caption_text"],
                     bot_id=BOT_ID,
@@ -273,7 +287,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=update.message.chat_id,
                 text=GETTING_PROFILE_INFORMATION,
             )
-            user_data = client.user_info_by_username(username).dict()
+            user_data = client.user_info_by_username(username).model_dump()
             await context.bot.deleteMessage(
                 message_id=bot_message.message_id,
                 chat_id=update.message.chat_id,
@@ -281,9 +295,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(
                 chat_id=update.effective_message.chat_id,
                 action=ChatAction.UPLOAD_PHOTO)
-            user_profile_picture_url = user_data["profile_pic_url_hd"]
-            await update.effective_user.send_photo(
-                photo=user_profile_picture_url, reply_markup=keyboards.instagram_download_state_keyboard_rm)
+            user_profile_picture_url = str(user_data["profile_pic_url_hd"])
+            
+            try:
+                await send_image(context.bot, update.effective_chat.id, user_profile_picture_url, keyboards.instagram_download_state_keyboard_rm)
+            except:
+                await update.effective_user.send_document(
+                    document=user_profile_picture_url, reply_markup=keyboards.instagram_download_state_keyboard_rm)
             return INSTAGRAM_DOWNLOAD_STATE
         except UserNotFound:
             await context.bot.deleteMessage(message_id=bot_message.message_id,
@@ -297,3 +315,4 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = "This is the image"
     await send_md_msg(context.bot, update.effective_chat.id, message, keyboards.instagram_state_keyboard_rm)
     return INSTAGRAM_DOWNLOAD_STATE
+

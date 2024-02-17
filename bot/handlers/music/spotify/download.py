@@ -13,7 +13,7 @@ from utils.constants.messages import GETTING_MEDIA_INFORMATION, PROCESSING, SPOT
 from utils.constants.states import MUSIC_SPOTIFY_STATE, START_STATE
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID
 
-from utils.decorators import send_action, sync_user
+from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import send_md_msg
 from utils import keyboards
 from utils.Spotidl import Spotidl
@@ -45,6 +45,7 @@ async def await_download_from_spotify(song):
 
 @send_action(ChatAction.TYPING)
 @sync_user
+@log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.message is not None
     message = update.message.text

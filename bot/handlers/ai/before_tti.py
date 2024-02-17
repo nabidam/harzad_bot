@@ -6,7 +6,7 @@ from telegram.constants import ChatAction
 from utils.constants.messages import AI_TTI_INSTRUCTION, COMMING_SOON
 from utils.constants.states import AI_STATE, AI_TTI_STATE
 
-from utils.decorators import send_action, sync_user
+from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import send_md_msg
 from utils import keyboards
 
@@ -15,6 +15,7 @@ logger = getLogger(__name__)
 
 @send_action(ChatAction.TYPING)
 @sync_user
+@log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_chat is not None
     # # TODO: comming soon

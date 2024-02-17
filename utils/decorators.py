@@ -3,6 +3,7 @@ from functools import wraps
 from configurations.settings import ADMINS
 from connectors.db import get_db
 import cruds.user as userCruds
+import cruds.log as logCruds
 
 
 def restricted(func):
@@ -42,6 +43,23 @@ def sync_user(func):
             else:
                 db_user = userCruds.create_user(db=db, tg_id=user_id, username=username, first_name=first_name, last_name=last_name)
                 print(f"user with {db_user.tg_id:} created.")
+        
+        return await func(update, context, *args, **kwargs)
+
+    return wrapped
+
+def log_message(func):
+    """This decorator log message details in db."""
+
+    @wraps(func)
+    async def wrapped(update, context, *args, **kwargs):
+        assert update.message is not None
+        message = update.message.text
+        assert update.effective_user is not None
+        user_id = update.effective_user.id
+        
+        for db in get_db():
+            db_log = logCruds.create_log(db=db, tg_id=user_id, message=message)
         
         return await func(update, context, *args, **kwargs)
 

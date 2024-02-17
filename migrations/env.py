@@ -9,6 +9,7 @@ from configurations.settings import DB_URI
 from connectors.db import Base
 
 from models.user import User
+from models.log import Log
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
