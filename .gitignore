@@ -118,3 +118,4 @@ login/*
 .env.prod
 
 conversation states
+my_cookies.txt
