@@ -9,7 +9,7 @@ from logging import getLogger
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction, ParseMode
-from configurations.settings import DOWNLOAD_VIDEO_PATH, HOST_ROOT, HOSTNAME, OPENAI_API_KEY
+from configurations.settings import DOWNLOAD_VIDEO_PATH, HOST_ROOT, HOSTNAME, OPENAI_API_KEY, USE_OLLAMA, OPENAI_MODEL
 from utils.constants import *
 from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import BOT_ID, DIRECT_VIDEO_LINK, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, INVALID_PINTEREST_URL, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
@@ -28,7 +28,12 @@ logger = getLogger(__name__)
 template = """You are a friendly chatbot, response to user's message with a friendly tone.
 User message: {message}"""
 prompt = PromptTemplate(template=template, input_variables=["message"])
-llm = ChatOpenAI(model='gpt-3.5-turbo')
+if USE_OLLAMA:
+    llm = ChatOpenAI(model=OPENAI_MODEL, openai_api_base="http://localhost:11434/v1/")
+else:
+    llm = ChatOpenAI(model=OPENAI_MODEL)
+
+
 chain = LLMChain(prompt=prompt, llm=llm)
 
 @send_action(ChatAction.TYPING)
