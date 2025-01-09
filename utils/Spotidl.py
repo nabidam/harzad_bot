@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
+from configurations.settings import DOWNLOAD_MP3_PATH
+
 from spotdl._version import __version__
 from spotdl.console import console_entry_point
 from spotdl.download.downloader import Downloader
@@ -68,8 +70,10 @@ class Spotidl:
 
         if downloader_settings is None:
             downloader_settings = {
-                "simple_tui": True
-                }
+                "simple_tui": True,
+                "yt_dlp_args": "--cookies /home/navid/projects/harzad_bot/my_cookies.txt",
+                "output": DOWNLOAD_MP3_PATH
+            }
 
         # try:
         #     if client_id is not None and client_secret is not None:

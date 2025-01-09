@@ -2,6 +2,7 @@ import asyncio
 import validators
 from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
+import os
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -11,7 +12,7 @@ from connectors.spotdl import create_spotdl_instance
 from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import GETTING_MEDIA_INFORMATION, PROCESSING, SPOTIFY_DOWNLOAD_PROGRESS, TASK_DONE
 from utils.constants.states import MUSIC_SPOTIFY_STATE, START_STATE
-from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID
+from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import send_md_msg
@@ -84,7 +85,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 assert p is not None
                 assert s.cover_url is not None
-                mp3 = open(p.name, 'rb')
+                mp3 = open(os.path.join(DOWNLOAD_MP3_PATH, p.name), 'rb')
                 # caption = p.parts[-1].split(".")[0]
                 await context.bot.send_audio(
                     chat_id=update.effective_chat.id, 
