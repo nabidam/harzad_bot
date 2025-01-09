@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-from configurations.settings import DOWNLOAD_MP3_PATH
+from configurations.settings import DOWNLOAD_MP3_PATH, YT_COOKIE_FILE
 
 from spotdl._version import __version__
 from spotdl.console import console_entry_point
@@ -71,7 +71,7 @@ class Spotidl:
         if downloader_settings is None:
             downloader_settings = {
                 "simple_tui": True,
-                "yt_dlp_args": "--cookies /home/navid/projects/harzad_bot/my_cookies.txt",
+                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE}",
                 "output": DOWNLOAD_MP3_PATH
             }
 
