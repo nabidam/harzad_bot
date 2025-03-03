@@ -33,16 +33,20 @@ def sync_user(func):
         last_name = update.effective_user.last_name
         username = update.effective_user.username
         
-        for db in get_db():
-            db_user = userCruds.user_exists(db=db, tg_id=user_id)
-            if db_user:
-                # update
-                # TODO log updates
-                db_user = userCruds.update_user(db=db, tg_id=user_id, username=username, first_name=first_name, last_name=last_name)
-                print(f"user with {db_user.tg_id:} updated.")
-            else:
-                db_user = userCruds.create_user(db=db, tg_id=user_id, username=username, first_name=first_name, last_name=last_name)
-                print(f"user with {db_user.tg_id:} created.")
+        try:
+            for db in get_db():
+                db_user = userCruds.user_exists(db=db, tg_id=user_id)
+                if db_user:
+                    # update
+                    # TODO log updates
+                    db_user = userCruds.update_user(db=db, tg_id=user_id, username=username, first_name=first_name, last_name=last_name)
+                    print(f"user with {db_user.tg_id:} updated.")
+                else:
+                    db_user = userCruds.create_user(db=db, tg_id=user_id, username=username, first_name=first_name, last_name=last_name)
+                    print(f"user with {db_user.tg_id:} created.")
+        except Exception as e:
+            print(e)
+            raise e
         
         return await func(update, context, *args, **kwargs)
 
@@ -58,8 +62,11 @@ def log_message(func):
         assert update.effective_user is not None
         user_id = update.effective_user.id
         
-        for db in get_db():
-            db_log = logCruds.create_log(db=db, tg_id=user_id, message=message)
+        try:
+            for db in get_db():
+                db_log = logCruds.create_log(db=db, tg_id=user_id, message=message)
+        except Exception as e:
+            print(e)
         
         return await func(update, context, *args, **kwargs)
 
