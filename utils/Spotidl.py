@@ -71,9 +71,10 @@ class Spotidl:
         if downloader_settings is None:
             downloader_settings = {
                 "simple_tui": True,
-                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --proxy socks5://127.0.0.1:40000",
+                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --force-ipv4 --proxy socks5://127.0.0.1:40000",
+                # "yt_dlp_args": f"--proxy socks5://127.0.0.1:40000",
                 "output": DOWNLOAD_MP3_PATH,
-                "lyrics_providers": ["genius", "musixmatch"]
+                #"lyrics_providers": ["genius", "musixmatch"]
             }
 
         # try:

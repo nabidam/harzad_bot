@@ -14,40 +14,40 @@ from utils.constants.messages import GETTING_MEDIA_INFORMATION, PROCESSING, SPOT
 from utils.constants.states import MUSIC_SPOTIFY_STATE, START_STATE
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH
 
+from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import send_md_msg
 from utils import keyboards
-from utils.Spotidl import Spotidl
+# from utils.Spotidl import Spotidl
+from spotdl import Spotdl
 
 # Init logger
 # logger = getLogger(__name__)
 
-def search_term(term):
-    spotdl = Spotidl()
+def search_term(spotdl: Spotdl, term: str):
     songs = spotdl.search([term])
 
     return songs
 
-async def await_search_from_spotify(term):
+async def await_search_from_spotify(spotdl: Spotdl, term: str):
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor() as pool:
-        result = await loop.run_in_executor(pool, search_term, term)
+        result = await loop.run_in_executor(pool, search_term, spotdl, term)
     return result
 
-def download_from_spotify(song):
-    spotdl = Spotidl()
+def download_from_spotify(spotdl: Spotdl, song: str):
     return spotdl.download(song)
 
-async def await_download_from_spotify(song):
+async def await_download_from_spotify(spotdl: Spotdl, song: str):
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor() as pool:
-        result = await loop.run_in_executor(pool, download_from_spotify, song)
+        result = await loop.run_in_executor(pool, download_from_spotify, spotdl, song)
     return result
 
 @send_action(ChatAction.TYPING)
 @sync_user
 @log_message
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handler(update: Update, context: MyContext):
     assert update.message is not None
     message = update.message.text
     print(message)
@@ -63,6 +63,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_user is not None
 
     if message_is_url:
+        # spotdl_instance = context.spotdl
+        spotdl_instance = context.application.bot_data["spotdl_instance"]
+        
         await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
         bot_message = await context.bot.send_message(chat_id=update.message.chat_id, text=PROCESSING)
         await context.bot.editMessageText(
@@ -70,7 +73,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=update.message.chat_id,
                     text=GETTING_MEDIA_INFORMATION,
                 )
-        songs = await await_search_from_spotify(message)
+        songs = await await_search_from_spotify(spotdl_instance, message)
 
         for index, song in enumerate(songs):
             download_progress_text = SPOTIFY_DOWNLOAD_PROGRESS.format(current=index+1, total=len(songs))
@@ -80,7 +83,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=download_progress_text,
                 )
             
-            s, p = await await_download_from_spotify(song)
+            s, p = await await_download_from_spotify(spotdl_instance, song)
 
             try:
                 assert p is not None

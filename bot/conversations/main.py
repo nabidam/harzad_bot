@@ -100,6 +100,6 @@ def main_conversation_handler():
         },
         fallbacks=[],
         name="main_handler",
-        persistent=True,
+        # persistent=True,
     )
     return conversation_handler
