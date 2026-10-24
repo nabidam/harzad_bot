@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+<title>Harzad</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:#0f0f0f; --card:#1a1a1a; --text:#f5f5f5; --hint:#9a9a9a;
+    --accent:#2481cc; --accent-text:#ffffff; --danger:#ef4444; --ok:#22c55e;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--text);
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;height:100dvh;overflow:hidden;
+    padding-top:env(safe-area-inset-top);
+  }
+  header{display:flex;align-items:baseline;justify-content:space-between;padding:14px 16px 6px}
+  header h1{font-size:17px;margin:0;font-weight:700}
+  header .user{color:var(--hint);font-size:13px}
+  main{flex:1;overflow-y:auto;padding:8px 16px 16px;-webkit-overflow-scrolling:touch}
+  section{display:none}
+  section.active{display:block}
+  .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+  label{font-size:13px;color:var(--hint);display:block;margin-bottom:6px}
+  input[type=text]{
+    width:100%;background:var(--bg);border:1px solid rgba(128,128,128,.25);
+    color:var(--text);border-radius:10px;padding:12px;font-size:15px;outline:none;
+  }
+  input[type=text]:focus{border-color:var(--accent)}
+  .btn{
+    width:100%;margin-top:10px;background:var(--accent);color:var(--accent-text);
+    border:0;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;
+    display:block;text-decoration:none;text-align:center;
+  }
+  .btn:disabled{opacity:.5}
+  .btn.secondary{background:transparent;border:1px solid rgba(128,128,128,.35);color:var(--text)}
+  #status{font-size:14px;color:var(--hint);margin-top:10px;min-height:1.2em}
+  #status.error{color:var(--danger)}
+  #status.done{color:var(--ok)}
+  .spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--hint);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:7px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .meta{font-size:13px;color:var(--hint);margin-top:4px;word-break:break-all}
+  .hint{font-size:12px;color:var(--hint);margin-top:10px}
+  /* chat */
+  #messages{display:flex;flex-direction:column;gap:8px;min-height:50vh}
+  .msg{max-width:85%;padding:9px 12px;border-radius:14px;font-size:15px;white-space:pre-wrap;word-wrap:break-word}
+  .msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-text);border-bottom-right-radius:4px}
+  .msg.bot{align-self:flex-start;background:var(--card);border-bottom-left-radius:4px}
+  .chatbar{display:none;gap:8px;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+  .chatbar input{flex:1}
+  .chatbar .btn{width:48px;min-width:48px;margin:0;padding:0;font-size:17px;border-radius:10px;flex:none}
+  nav{display:flex;border-top:1px solid rgba(128,128,128,.2);padding-bottom:env(safe-area-inset-bottom)}
+  nav button{
+    flex:1;background:none;border:0;color:var(--hint);padding:10px 0 8px;
+    font-size:12px;font-weight:600;cursor:pointer;display:flex;flex-direction:column;gap:3px;align-items:center;
+  }
+  nav button .ico{font-size:20px;line-height:1}
+  nav button.active{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Harzad</h1>
+  <div class="user" id="user-name"></div>
+</header>
+
+<main>
+  <section id="tab-download" class="active">
+    <div class="card">
+      <label for="url">YouTube link</label>
+      <input type="text" id="url" placeholder="https://youtube.com/watch?v=&hellip;" autocomplete="off" spellcheck="false"/>
+      <button class="btn" id="dl-btn">Download</button>
+      <div id="status"></div>
+      <div class="hint" id="mode-hint" style="display:none">Browser mode &mdash; open the app from the Telegram menu button for chat delivery and the native save popup.</div>
+    </div>
+    <div class="card" id="result" style="display:none">
+      <div style="font-weight:600" id="result-title"></div>
+      <div class="meta" id="result-meta"></div>
+      <button class="btn" id="save-btn">Save to device</button>
+      <a class="btn secondary" id="open-link" target="_blank" rel="noopener">Download via link</a>
+      <div class="hint">A copy is also sent to your chat with the bot.</div>
+    </div>
+  </section>
+
+  <section id="tab-chat">
+    <div id="messages"></div>
+  </section>
+</main>
+
+<div class="chatbar" id="chatbar">
+  <input type="text" id="chat-input" placeholder="Message Harzad&hellip;" autocomplete="off"/>
+  <button class="btn" id="send-btn">&#10148;</button>
+</div>
+
+<nav>
+  <button data-tab="download" class="active"><span class="ico">&#11015;&#65039;</span>Download</button>
+  <button data-tab="chat"><span class="ico">&#128172;</span>Chat</button>
+</nav>
+
+<script>
+"use strict";
+// Runs inside Telegram's WebView and in a plain browser (preview mode).
+// Outside Telegram the SDK script may be missing entirely, so every tg
+// access is guarded.
+const tg = (window.Telegram && window.Telegram.WebApp) || null;
+const inTG = !!(tg && tg.initData && tg.initData.length);
+if (tg) {
+  try {
+    tg.ready();
+    tg.expand();
+    if (tg.setHeaderColor) tg.setHeaderColor(tg.themeParams && tg.themeParams.bg_color || "#0f0f0f");
+    if (tg.setBackgroundColor) tg.setBackgroundColor(tg.themeParams && tg.themeParams.bg_color || "#0f0f0f");
+  } catch (e) {}
+}
+
+function applyTheme(){
+  if (!tg) return;
+  const t = tg.themeParams || {};
+  const s = document.documentElement.style;
+  const set = (k, v) => { if (v) s.setProperty(k, v); };
+  set("--bg", t.bg_color);
+  set("--card", t.secondary_bg_color);
+  set("--text", t.text_color);
+  set("--hint", t.hint_color);
+  set("--accent", t.button_color);
+  set("--accent-text", t.button_text_color);
+}
+applyTheme();
+if (tg) tg.onEvent("themeChanged", applyTheme);
+
+const $ = (id) => document.getElementById(id);
+const state = { user: null, currentJob: null, messages: [] };
+
+// ---- tabs ----
+document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  const tab = b.dataset.tab;
+  $("tab-download").classList.toggle("active", tab === "download");
+  $("tab-chat").classList.toggle("active", tab === "chat");
+  $("chatbar").style.display = tab === "chat" ? "flex" : "none";
+  if (tab === "chat" && state.messages.length === 0) addMsg("bot", "Hi! Ask me anything \u200D\uFE0F");
+}));
+
+// ---- api helper ----
+async function api(path, body){
+  const res = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+function haptic(kind){
+  try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(kind); } catch (e) {}
+}
+
+// ---- auth ----
+async function boot(){
+  try {
+    const data = await api("/api/auth", { initData: inTG ? tg.initData : "" });
+    if (data.user) {
+      state.user = data.user;
+      $("user-name").textContent =
+        [state.user.first_name, state.user.last_name].filter(Boolean).join(" ") || "";
+    } else {
+      $("user-name").textContent = "browser mode";
+      $("mode-hint").style.display = "block";
+    }
+  } catch (e) {
+    $("user-name").textContent = "not signed in";
+  }
+}
+boot();
+
+// ---- download tab ----
+const STATE_LABEL = {
+  starting: "Starting\u2026",
+  extracting: "Fetching video info\u2026",
+  downloading: "Downloading\u2026",
+  sending: "Sending to chat\u2026",
+  done: "Ready",
+};
+
+function busyStatus(text){
+  $("status").className = "";
+  $("status").innerHTML = text ? '<span class="spinner"></span>' + text : "";
+}
+function plainStatus(text, cls){
+  const el = $("status");
+  el.className = cls || "";
+  el.textContent = text || "";
+}
+
+async function startDownload(){
+  const url = $("url").value.trim();
+  if (!url) return;
+  $("dl-btn").disabled = true;
+  $("result").style.display = "none";
+  try {
+    const job = await api("/api/jobs", { url, initData: inTG ? tg.initData : "" });
+    state.currentJob = job.id;
+    busyStatus(STATE_LABEL.starting);
+    poll(job.id);
+  } catch (e) {
+    plainStatus(e.message, "error");
+    haptic("error");
+    $("dl-btn").disabled = false;
+  }
+}
+
+async function poll(id){
+  let job;
+  try { job = await api("/api/jobs/" + id); } catch (e) { return; }
+  if (job.state === "done") {
+    plainStatus(STATE_LABEL.done + " \u2705", "done");
+    haptic("success");
+    showResult(job);
+    $("dl-btn").disabled = false;
+  } else if (job.state === "error") {
+    plainStatus(job.error || "Download failed.", "error");
+    haptic("error");
+    $("dl-btn").disabled = false;
+  } else {
+    busyStatus(STATE_LABEL[job.state] || job.state);
+    setTimeout(() => poll(id), 2000);
+  }
+}
+
+function showResult(job){
+  state.result = job;
+  $("result").style.display = "block";
+  $("result-title").textContent = job.title || "video";
+  $("result-meta").textContent =
+    [job.file_name, job.file_size_mb ? job.file_size_mb + " MB" : null].filter(Boolean).join(" \u00B7 ");
+  const link = $("open-link");
+  if (job.file_url) { link.href = job.file_url; link.style.display = "block"; }
+  else link.style.display = "none";
+}
+
+$("dl-btn").addEventListener("click", startDownload);
+$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") startDownload(); });
+
+$("save-btn").addEventListener("click", () => {
+  const job = state.result;
+  if (!job || !job.file_url) return;
+  haptic("light");
+  if (inTG && typeof tg.downloadFile === "function") {
+    tg.downloadFile({ url: job.file_url, file_name: job.file_name || "video.mp4" }, (accepted) => {
+      if (!accepted) plainStatus("Download cancelled.", "");
+    });
+  } else {
+    // browser: Content-Disposition: attachment makes this a plain download
+    window.open(job.file_url, "_blank");
+  }
+});
+
+// ---- chat tab ----
+function addMsg(role, text){
+  state.messages.push({ role, content: text });
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  $("messages").appendChild(div);
+  $("messages").scrollTop = $("messages").scrollHeight;
+  return div;
+}
+
+async function sendChat(){
+  const input = $("chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  addMsg("user", text);
+  $("send-btn").disabled = true;
+  const thinking = addMsg("bot", "\u2026");
+  try {
+    const data = await api("/api/chat", {
+      messages: state.messages.slice(0, -1),
+      initData: inTG ? tg.initData : "",
+    });
+    thinking.textContent = data.reply || "(empty)";
+  } catch (e) {
+    thinking.textContent = "Chat is unavailable right now: " + e.message;
+  }
+  $("send-btn").disabled = false;
+  $("messages").scrollTop = $("messages").scrollHeight;
+}
+
+$("send-btn").addEventListener("click", sendChat);
+$("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+</script>
+</body>
+</html>

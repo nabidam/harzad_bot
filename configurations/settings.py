@@ -44,3 +44,13 @@ DB_URI = os.environ["DB_URI"]
 
 YT_COOKIE_FILE = os.environ["YT_COOKIE_FILE"]
 YT_PROXY = os.environ["YT_PROXY"]
+
+# --- Mini App (aiohttp server embedded in the bot process) ---
+# The app serves the SPA and the API from one origin — Bot API 10.2 locks
+# WebApp methods to the registered Mini App domain, so they must share it.
+WEB_HOST = os.environ.get("WEB_HOST", "127.0.0.1")
+WEB_PORT = int(os.environ.get("WEB_PORT", "8377"))
+# Public HTTPS URL where the Mini App is reachable (e.g. a cloudflared
+# tunnel). Drives the chat menu button and absolute file-download URLs.
+# Empty = Mini App disabled, bot runs as before.
+MINIAPP_URL = os.environ.get("MINIAPP_URL", "")
