@@ -12,7 +12,6 @@ from utils.constants.messages import BOT_ID, DOWNLOADING_VIDEO, GETTING_MEDIA_IN
 from utils.constants.states import INSTAGRAM_STATE, YOUTUBE_MP3_STATE
 
 from utils.decorators import send_action, sync_user, log_message
-from utils.helpers import escape_md, send_md_msg
 from utils import keyboards
 
 from yt_dlp import YoutubeDL, utils
@@ -116,8 +115,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 caption=BOT_ID,  
                                 # title=s.json["name"], 
                                 # performer=s.json["artist"], 
-                                reply_markup=keyboards.pinterest_state_keyboard_rm
+                                protect_content=True,
+                                reply_markup=keyboards.youtube_mp3_state_keyboard_rm
                             )
+                            await update.message.react(emoji="✅")
                 else:
                     ydl.process_info(info_dict)
                     title = info_dict.get('title')
@@ -149,15 +150,27 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             caption=BOT_ID,  
                             # title=s.json["name"], 
                             # performer=s.json["artist"], 
-                            reply_markup=keyboards.pinterest_state_keyboard_rm
+                            protect_content=True,
+                            reply_markup=keyboards.youtube_mp3_state_keyboard_rm
                         )
+                        await update.message.react(emoji="✅")
 
             except utils.DownloadError:
+                await update.message.react(emoji="❌")
                 await context.bot.editMessageText(
                     message_id=bot_message.message_id,
                     chat_id=update.message.chat_id,
                     text=SOMETHING_WENT_WRONG,
+                    reply_markup=keyboards.youtube_mp3_state_keyboard_rm,
                 )
+    else:
+        await update.message.react(emoji="❌")
+        await context.bot.editMessageText(
+            message_id=bot_message.message_id,
+            chat_id=update.message.chat_id,
+            text=LINK_IS_INVALID,
+            reply_markup=keyboards.youtube_mp3_state_keyboard_rm,
+        )
     # else:
     #     await context.bot.editMessageText(
     #         message_id=bot_message.message_id,

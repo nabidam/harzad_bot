@@ -4,7 +4,7 @@ from logging import getLogger
 
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
 from utils.constants import *
 from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import BOT_ID, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
@@ -12,7 +12,7 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE
 
 from utils.decorators import send_action,sync_user , log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import send_image, send_md_msg
+from utils.helpers import escape_html, send_html_msg, send_image
 from utils import keyboards
 
 from instagrapi.exceptions import MediaNotFound
@@ -23,6 +23,13 @@ from utils.instagram import get_user_client_instagram
 
 # Init logger
 logger = getLogger(__name__)
+
+def build_caption(media_info) -> str:
+    """HTML caption for downloaded media; user text is escaped."""
+    return MEDIA_CAPTION.format(
+        caption=escape_html(media_info.get("caption_text") or ""),
+        bot_id=BOT_ID,
+    )
 
 @send_action(ChatAction.TYPING)
 @sync_user
@@ -53,6 +60,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=bot_message.message_id,
             chat_id=update.message.chat_id,
         )
+        await update.message.react(emoji="❌")
         await context.bot.send_message(
             chat_id=update.message.chat_id,
             text=SOMETHING_WENT_WRONG,
@@ -66,15 +74,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=bot_message.message_id,
             chat_id=update.message.chat_id,
         )
+        await update.message.react(emoji="❌")
         await context.bot.send_message(
             chat_id=update.message.chat_id,
             text=SOMETHING_WENT_WRONG,
             reply_markup=keyboards.instagram_download_state_keyboard_rm,
         )
         return INSTAGRAM_DOWNLOAD_STATE
-
-        # TODO: check for url validation
-        # TODO: check for link type
 
     if message_is_url:
         is_link_for_post = False
@@ -102,6 +108,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message_id=bot_message.message_id,
                     chat_id=update.message.chat_id,
                 )
+                await update.message.react(emoji="❌")
                 await context.bot.send_chat_action(
                     chat_id=update.effective_message.chat_id,
                     action=ChatAction.TYPING,
@@ -123,6 +130,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         message_id=bot_message.message_id,
                         chat_id=update.message.chat_id,
                     )
+                    await update.message.react(emoji="❌")
                     await update.message.reply_text(
                         LINK_IS_INVALID,
                         reply_markup=keyboards.instagram_download_state_keyboard_rm,
@@ -135,8 +143,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_profile_picture_url = user_data["profile_pic_url_hd"]
                 await update.effective_user.send_photo(
                     photo=user_profile_picture_url,
+                    protect_content=True,
                     reply_markup=keyboards.instagram_download_state_keyboard_rm,
                 )
+                await update.message.react(emoji="✅")
                 return INSTAGRAM_DOWNLOAD_STATE
 
         if media_type == MEDIA_PHOTO:
@@ -147,18 +157,24 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(
                 chat_id=update.effective_message.chat_id,
                 action=ChatAction.UPLOAD_PHOTO)
-            
+            caption = build_caption(media_info)
             try:
-                await update.effective_user.send_photo(photo=str(media_info["thumbnail_url"]))
-            except:
-                await update.effective_user.send_document(
-                    document=str(media_info["thumbnail_url"]), reply_markup=keyboards.instagram_download_state_keyboard_rm)
-            
-            caption = MEDIA_CAPTION.format(
-                    caption=media_info["caption_text"],
-                    bot_id=BOT_ID,
+                await update.effective_user.send_photo(
+                    photo=str(media_info["thumbnail_url"]),
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    protect_content=True,
+                    reply_markup=keyboards.instagram_download_state_keyboard_rm,
                 )
-            await send_md_msg(context.bot, update.effective_chat.id, caption, keyboards.instagram_download_state_keyboard_rm)
+            except Exception:
+                await update.effective_user.send_document(
+                    document=str(media_info["thumbnail_url"]),
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    protect_content=True,
+                    reply_markup=keyboards.instagram_download_state_keyboard_rm,
+                )
+            await update.message.react(emoji="✅")
             return INSTAGRAM_DOWNLOAD_STATE
         elif (media_type == MEDIA_VIDEO and product_type == IS_FEED
                 or media_type == MEDIA_IGTV and product_type == IS_IGTV
@@ -170,18 +186,24 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(
                 chat_id=update.effective_message.chat_id,
                 action=ChatAction.UPLOAD_VIDEO)
-            
+            caption = build_caption(media_info)
             try:
-                await update.effective_user.send_video(video=str(media_info["video_url"]))
-            except:
-                await update.effective_user.send_document(
-                    document=str(media_info["video_url"]), reply_markup=keyboards.instagram_download_state_keyboard_rm)
-                
-            caption = MEDIA_CAPTION.format(
-                    caption=media_info["caption_text"],
-                    bot_id=BOT_ID,
+                await update.effective_user.send_video(
+                    video=str(media_info["video_url"]),
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    protect_content=True,
+                    reply_markup=keyboards.instagram_download_state_keyboard_rm,
                 )
-            await send_md_msg(context.bot, update.effective_chat.id, caption, keyboards.instagram_download_state_keyboard_rm)
+            except Exception:
+                await update.effective_user.send_document(
+                    document=str(media_info["video_url"]),
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    protect_content=True,
+                    reply_markup=keyboards.instagram_download_state_keyboard_rm,
+                )
+            await update.message.react(emoji="✅")
             return INSTAGRAM_DOWNLOAD_STATE
         elif media_type == MEDIA_ALBUM:
             await context.bot.deleteMessage(
@@ -194,18 +216,27 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=update.effective_message.chat_id,
                         action=ChatAction.UPLOAD_VIDEO,
                     )
-                    await update.effective_user.send_video(video=media["video_url"])
+                    await update.effective_user.send_video(
+                        video=media["video_url"],
+                        protect_content=True,
+                    )
                 else:
                     await context.bot.send_chat_action(
                         chat_id=update.effective_message.chat_id,
                         action=ChatAction.UPLOAD_PHOTO,
                     )
-                    await update.effective_user.send_photo(photo=media["thumbnail_url"])
-            caption = MEDIA_CAPTION.format(
-                    caption=media_info["caption_text"],
-                    bot_id=BOT_ID,
-                )
-            await send_md_msg(context.bot, update.effective_chat.id, caption, keyboards.instagram_download_state_keyboard_rm)
+                    await update.effective_user.send_photo(
+                        photo=media["thumbnail_url"],
+                        protect_content=True,
+                    )
+            caption = build_caption(media_info)
+            await send_html_msg(
+                context.bot,
+                update.effective_chat.id,
+                caption,
+                keyboards.instagram_download_state_keyboard_rm,
+            )
+            await update.message.react(emoji="✅")
             return INSTAGRAM_DOWNLOAD_STATE
         elif media_type == STORY:
             try:
@@ -216,6 +247,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=GETTING_STORY_INFORMATION,
                 )
                 story_info = client.story_info(story_pk_from_url)
+                caption = MEDIA_CAPTION.format(caption="", bot_id=BOT_ID)
 
                 if story_info.video_url is None:
                     await context.bot.editMessageText(
@@ -229,12 +261,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.effective_user.send_photo(
                         photo=story_info.thumbnail_url, # type: ignore
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                        protect_content=True,
                         reply_markup=keyboards.instagram_download_state_keyboard_rm,
                     )
                     await context.bot.deleteMessage(
                         message_id=bot_message.message_id,
                         chat_id=update.message.chat_id,
                     )
+                    await update.message.react(emoji="✅")
                 else:
                     await context.bot.editMessageText(
                         chat_id=update.message.chat_id,
@@ -247,6 +283,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.effective_user.send_photo(
                         photo=story_info.thumbnail_url, # type: ignore
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                        protect_content=True,
                         reply_markup=keyboards.instagram_download_state_keyboard_rm,
                     )
                     await context.bot.editMessageText(
@@ -260,14 +299,17 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.effective_user.send_video(
                         video=story_info.video_url,
+                        protect_content=True,
                         reply_markup=keyboards.instagram_download_state_keyboard_rm,
                     )
                     await context.bot.deleteMessage(
                         message_id=bot_message.message_id,
                         chat_id=update.message.chat_id,
                     )
+                    await update.message.react(emoji="✅")
                 return INSTAGRAM_DOWNLOAD_STATE
             except MediaNotFound:
+                await update.message.react(emoji="❌")
                 await context.bot.editMessageText(
                     chat_id=update.message.chat_id,
                     message_id=bot_message.message_id,
@@ -276,6 +318,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return INSTAGRAM_DOWNLOAD_STATE
         else:
+            await update.message.react(emoji="❌")
             await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.back_keyboard) # type: ignore
             return INSTAGRAM_DOWNLOAD_STATE
         
@@ -299,20 +342,22 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 await send_image(context.bot, update.effective_chat.id, user_profile_picture_url, keyboards.instagram_download_state_keyboard_rm)
-            except:
+            except Exception:
                 await update.effective_user.send_document(
-                    document=user_profile_picture_url, reply_markup=keyboards.instagram_download_state_keyboard_rm)
+                    document=user_profile_picture_url,
+                    protect_content=True,
+                    reply_markup=keyboards.instagram_download_state_keyboard_rm)
+            await update.message.react(emoji="✅")
             return INSTAGRAM_DOWNLOAD_STATE
         except UserNotFound:
+            await update.message.react(emoji="❌")
             await context.bot.deleteMessage(message_id=bot_message.message_id,
                                             chat_id=update.message.chat_id)
             await update.message.reply_text(
                 USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN,
-                reply_markup=keyboards.back_keyboard) # type: ignore
+                reply_markup=keyboards.back_keyboard)
+            return INSTAGRAM_DOWNLOAD_STATE
     else:
-        await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.back_keyboard) # type: ignore
-    
-    message = "This is the image"
-    await send_md_msg(context.bot, update.effective_chat.id, message, keyboards.instagram_state_keyboard_rm)
-    return INSTAGRAM_DOWNLOAD_STATE
-
+        await update.message.react(emoji="❌")
+        await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.back_keyboard)
+        return INSTAGRAM_DOWNLOAD_STATE

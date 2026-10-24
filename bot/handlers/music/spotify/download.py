@@ -16,7 +16,6 @@ from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DO
 
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
-from utils.helpers import send_md_msg
 from utils import keyboards
 # from utils.Spotidl import Spotidl
 from spotdl import Spotdl
@@ -96,7 +95,8 @@ async def handler(update: Update, context: MyContext):
                     thumbnail=s.cover_url, 
                     title=s.json["name"], 
                     performer=s.json["artist"], 
-                    duration=int(s.duration/1000)
+                    duration=int(s.duration/1000),
+                    protect_content=True,
                 )
             except AssertionError:
                 pass
@@ -111,6 +111,7 @@ async def handler(update: Update, context: MyContext):
             text=TASK_DONE,
             reply_markup=keyboards.music_spotify_state_keyboard_rm,
         )
+        await update.message.react(emoji="✅")
         
         # songs = await await_download_from_spotify(message, update, context)
     # songs = spotdl.search([message])

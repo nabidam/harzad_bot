@@ -4,22 +4,60 @@ import signal
 import sys
 from importlib import import_module
 from datetime import datetime
+from logging import getLogger
 
+from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, ContextTypes, Application, PicklePersistence
 from bot.conversations.main import main_conversation_handler
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY
+from utils.constants.messages import SOMETHING_WENT_WRONG
 
 import configurations.settings as settings
 from connectors.spotdl import create_spotdl_instance
 from utils.custom_context import MyContext
 from utils.helpers import create_requirement_folders
-import utils.logger as logger
+from utils.logger import init_logger
 from spotdl import SpotifyClient, Spotdl
+
+logger = getLogger(__name__)
+
+
+async def post_init(application: Application):
+    """Configure the bot's public profile once the application is up.
+
+    Runs inside the network retry loop, so a transient network error here
+    is retried before polling starts.
+    """
+    bot = application.bot
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Open the menu"),
+        BotCommand(command="help", description="How to use the bot"),
+    ])
+    await bot.set_my_description(
+        "Harzad downloads media from Instagram, Spotify, Pinterest and YouTube, "
+        "and can chat or generate images with AI. Send /start to begin."
+    )
+    await bot.set_my_short_description("Media downloader + AI 🎧🎞🤖")
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Catch unhandled handler errors.
+
+    Without this, any exception (e.g. a DB outage) silently drops the update
+    and the user never hears back. Log the full traceback, then tell the user.
+    """
+    logger.error("Unhandled exception while handling update", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message is not None:
+        try:
+            await update.effective_message.react(emoji="❌")
+            await update.effective_message.reply_text(SOMETHING_WENT_WRONG)
+        except Exception:
+            logger.debug("Could not notify the user about the error", exc_info=True)
 
 if __name__ == "__main__":
     now = datetime.now()
     strtime = now.strftime("%Y_%m_%d_%H_%M_%S")
-    logger.init_logger(f"logs/{settings.NAME}_{strtime}.log")
+    init_logger(f"logs/{settings.NAME}_{strtime}.log")
 
     create_requirement_folders()
     # SpotifyClient.init(
@@ -55,6 +93,7 @@ if __name__ == "__main__":
     application = (ApplicationBuilder()
                    .token(settings.TOKEN)
                 #    .context_types(context_types)
+                   .post_init(post_init)
                    .read_timeout(50)
                    .write_timeout(50)
                    .get_updates_read_timeout(50)
@@ -65,5 +104,6 @@ if __name__ == "__main__":
     application.bot_data["spotdl_instance"] = spotdl_instance
 
     application.add_handler(main_conversation_handler())
+    application.add_error_handler(on_error)
 
     application.run_polling()

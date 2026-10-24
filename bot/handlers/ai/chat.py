@@ -17,7 +17,7 @@ from utils.constants.states import AI_CHAT_STATE
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import escape_md, prepare_link, send_md_msg
+from utils.helpers import escape_html, send_html_msg
 from utils import keyboards
 
 from utils.instagram import get_user_client_instagram
@@ -55,6 +55,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     print(llm_response)
     
-    await send_md_msg(context.bot, update.effective_chat.id, llm_response["text"], keyboards.ai_chat_state_keyboard_rm)
+    await send_html_msg(context.bot, update.effective_chat.id, escape_html(llm_response["text"]), keyboards.ai_chat_state_keyboard_rm)
     
     return AI_CHAT_STATE

@@ -14,7 +14,7 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PI
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import escape_md, prepare_link, send_md_msg
+from utils.helpers import escape_html, prepare_link, send_html_msg
 from utils import keyboards
 
 from utils.instagram import get_user_client_instagram
@@ -123,16 +123,19 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     duration=duration, 
                                     thumbnail=thumbnail_url, 
                                     caption=BOT_ID, 
-                                    reply_markup=keyboards.pinterest_state_keyboard_rm, 
+                                    protect_content=True,
+                                    reply_markup=keyboards.youtube_download_state_keyboard_rm, 
                                     supports_streaming=True
                                 )
+                                await update.message.react(emoji="✅")
                             else:
                                 await context.bot.send_chat_action(
                                     chat_id=update.effective_message.chat_id,
                                     action=ChatAction.TYPING,
                                 )
-                                download_text = DIRECT_VIDEO_LINK.format(path = prepare_link(filename))
-                                await send_md_msg(context.bot, update.effective_chat.id, download_text, keyboards.pinterest_state_keyboard_rm)
+                                download_text = DIRECT_VIDEO_LINK.format(path=escape_html(prepare_link(filename)))
+                                await send_html_msg(context.bot, update.effective_chat.id, download_text, keyboards.youtube_download_state_keyboard_rm)
+                                await update.message.react(emoji="✅")
                 else:
                     ydl.process_info(info_dict)
                     title = info_dict.get('title')
@@ -166,23 +169,36 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 duration=duration, 
                                 thumbnail=thumbnail_url, 
                                 caption=BOT_ID, 
-                                reply_markup=keyboards.pinterest_state_keyboard_rm, 
+                                protect_content=True,
+                                reply_markup=keyboards.youtube_download_state_keyboard_rm, 
                                 supports_streaming=True
                             )
+                            await update.message.react(emoji="✅")
                         else:
                             await context.bot.send_chat_action(
                                 chat_id=update.effective_message.chat_id,
                                 action=ChatAction.TYPING,
                             )
-                            download_text = DIRECT_VIDEO_LINK.format(path = prepare_link(filename))
-                            await send_md_msg(context.bot, update.effective_chat.id, download_text, keyboards.pinterest_state_keyboard_rm)
+                            download_text = DIRECT_VIDEO_LINK.format(path=escape_html(prepare_link(filename)))
+                            await send_html_msg(context.bot, update.effective_chat.id, download_text, keyboards.youtube_download_state_keyboard_rm)
+                            await update.message.react(emoji="✅")
 
             except utils.DownloadError:
+                await update.message.react(emoji="❌")
                 await context.bot.editMessageText(
                     message_id=bot_message.message_id,
                     chat_id=update.message.chat_id,
                     text=SOMETHING_WENT_WRONG,
+                    reply_markup=keyboards.youtube_download_state_keyboard_rm,
                 )
+    else:
+        await update.message.react(emoji="❌")
+        await context.bot.editMessageText(
+            message_id=bot_message.message_id,
+            chat_id=update.message.chat_id,
+            text=LINK_IS_INVALID,
+            reply_markup=keyboards.youtube_download_state_keyboard_rm,
+        )
     # else:
     #     await context.bot.editMessageText(
     #         message_id=bot_message.message_id,

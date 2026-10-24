@@ -13,7 +13,6 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PI
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import escape_md, send_md_msg
 from utils import keyboards
 
 from instagrapi.exceptions import MediaNotFound
@@ -110,21 +109,26 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         duration=duration, 
                         thumbnail=thumbnail_url, 
                         caption=BOT_ID, 
+                        protect_content=True,
                         reply_markup=keyboards.pinterest_state_keyboard_rm, 
                         supports_streaming=True
                     )
+                    await update.message.react(emoji="✅")
             except utils.DownloadError:
+                await update.message.react(emoji="❌")
                 await context.bot.editMessageText(
                     message_id=bot_message.message_id,
                     chat_id=update.message.chat_id,
                     text=SOMETHING_WENT_WRONG,
+                    reply_markup=keyboards.pinterest_state_keyboard_rm,
                 )
     else:
+        await update.message.react(emoji="❌")
         await context.bot.editMessageText(
             message_id=bot_message.message_id,
             chat_id=update.message.chat_id,
-            text=escape_md(INVALID_PINTEREST_URL),
-            parse_mode=ParseMode.MARKDOWN_V2
+            text=INVALID_PINTEREST_URL,
+            parse_mode=ParseMode.HTML
         )
     
     return PINTEREST_STATE

@@ -150,39 +150,52 @@ CHALLENGE_REQUIRED: str = "Challenge Required, Please Try Again A few Moment Lat
 YOU_NEED_TO_LOGIN_AGAIN: str = "You need to login again!"
 
 # mine
+# Templates in this section are sent with HTML parse mode (see send_html_msg).
+# Anything user-provided that is formatted into a template must be
+# escaped with escape_html() first.
 
 HELLO: str = """
-Hi, {first_name} {last_name} (@{username}).
-Your id: `{user_id}`
-message: `{message}`
+Hi, <b>{name}</b> 👋
+
+Your id: <code>{user_id}</code>
+
+Pick an option below to get started 👇
 """
 
 HELP: str = """
-This is a help message
+<b>How to use Harzad</b>
+
+<b>Instagram</b> — download posts, reels, stories and profile pictures
+<b>Music</b> — download Spotify songs, albums and playlists
+<b>Pinterest</b> — download videos from pin.it links
+<b>YouTube</b> — download videos (mp4) or audio (mp3)
+<b>AI</b> — chat with me, or generate an image from a text prompt
+
+Send <code>/start</code> any time to open the menu again.
 """
 
 STATE_INDICATOR: str = """
-You are at the state `{state}`
+You are at the state <code>{state}</code>
 """
 
 PROCESSING: str = """
-Processing ⏳...
+Processing ⏳
 """
 
 SOMETHING_WENT_WRONG: str = """
-Something went wrong 🤯
+Something went wrong 🤯 Please try again.
 """
 
 GETTING_MEDIA_INFORMATION: str = """
-Getting media information 👨🏻‍💻...
+Fetching media info 🔎
 """
 
 MEDIA_NOT_FOUND: str = """
-Media not found :(
+Media not found or unavailable. Please check your link and try again.
 """
 
 LINK_IS_INVALID: str = """
-Link is invalid!
+That link looks invalid. Please check it and try again.
 """
 
 BOT_ID: str = """
@@ -192,63 +205,69 @@ BOT_ID: str = """
 MEDIA_CAPTION: str = """
 {caption}
 
-➖➖➖➖➖➖➖➖➖➖
 {bot_id}
 """
 
 CHOOSE_MESSAGE: str = """
-What can I do for you?
+Choose an option 👇
 """
 
 INSTAGRAM_INSTRUCTION: str = """
-Please send me the url of the post/story/reels, to download.
-You can send me the username of a user in the format `@username`, to download the profile picture.
+Please send me the url of the post, story or reel you want to download.
+
+You can also send a username in the format <code>@username</code> to download their profile picture.
 """
 
 SPOTIFY_DOWNLOAD_PROGRESS: str = """
-Downloading {current}/{total} ...
+Downloading track {current}/{total} 🎧
 """
 
 SPOTIFY_INSTRUCTION: str = """
-Please send me the url of the song/album/playlist, to download.
-Sometimes some songs in a playlist does not have a public link to download, so I can't download it for you, sorry for that.
+Please send me the url of the song, album or playlist you want to download.
+
+Sometimes some songs in a playlist do not have a public link to download, so I can't download them for you, sorry for that.
 """
 
 TASK_DONE: str = """
-Your task is done 🥳
+All done 🥳
 """
 
 PINTEREST_INSTRUCTION: str = """
-Please send me the url of the video on `pinterest`, to download.
+Please send me the url of the Pinterest video you want to download.
 """
 
 DOWNLOADING_VIDEO: str = """
-Downloading and processing video ...
+Downloading and processing video ⬇️
 """
 
 INVALID_PINTEREST_URL: str = """
-Given url is invalid. the url should be start with `https://pin.it/`
+That url is invalid. It should start with <code>https://pin.it/</code>
 """
 
 YOUTUBE_INSTRUCTION: str = """
-Please send me the url of the video/playlist, to download.
-Sometimes some videos are not downloadable, so I can't download it for you, sorry for that.
+Please send me the url of the video or playlist you want to download.
+
+Sometimes some videos are not downloadable, so I can't download them for you, sorry for that.
 """
 
 DIRECT_VIDEO_LINK: str = """
-You can download the video using this link: {path}
+The file is too big to send here. You can download it using this link:
+
+<code>{path}</code>
 """
 
 AI_CHAT_INSTRUCTION: str = """
-Start a conversation with bot :)
+Start a conversation with me 🙂
 """
 
 AI_TTI_INSTRUCTION: str = """
-Write a prompt to generate an image according to that text, for example `an iguana on the beach` or a complicated one `painting of girl from behind looking a fleet of imperial ships in the sky, in a meadow of flowers by donato giancola and Eddie Mendoza, elegant, dynamic lighting, beautiful, poster, trending on artstation, poster, anato finnstark, wallpaper, 4 k, award winning, digital art, imperial colors, fantastic view`.
+Send me a prompt and I will generate an image from it.
+
+For example <code>an iguana on the beach</code>, or a long, detailed prompt.
 """
 
 AI_PROMPT_FOR_CAPTION: str = """
-prompt: `{prompt}`
+Prompt: <code>{prompt}</code>
 """
 
 COMMING_SOON: str = """
