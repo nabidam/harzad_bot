@@ -3,18 +3,18 @@ import validators
 import re
 from logging import getLogger
 
-from telegram import Update
+from telegram import CopyTextButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction, ParseMode
 from configurations.settings import DOWNLOAD_VIDEO_PATH, HOST_ROOT, HOSTNAME, YT_COOKIE_FILE
 from utils.constants import *
-from utils.constants.keyboards import BACK_KEYBOARD
+from utils.constants.keyboards import BACK_KEYBOARD, COPY_LINK_BUTTON
 from utils.constants.messages import BOT_ID, DIRECT_VIDEO_LINK, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, INVALID_PINTEREST_URL, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
 from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PINTEREST_STATE, YOUTUBE_DOWNLOAD_STATE
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import escape_html, prepare_link, react_message, send_html_msg
+from utils.helpers import escape_html, prepare_cover, prepare_link, react_message, send_html_msg
 from utils import keyboards
 
 from utils.instagram import get_user_client_instagram
@@ -27,9 +27,13 @@ logger = getLogger(__name__)
 
 ydl_opts = {
     # 'format': 'bestvideo[ext=mp4]+bestaudio/best',
-    'format': 'bestvideo[ext=mp4][height<=720]+bestaudio/best[height<=720]',
+    # mp4 only: Telegram's sendVideo demotes webm to a plain document
+    # (no player, no streaming, no cover/thumbnail)
+    'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]',
     'outtmpl': DOWNLOAD_VIDEO_PATH + '%(title)s.%(ext)s',
-    'cookiefile': YT_COOKIE_FILE
+    'cookiefile': YT_COOKIE_FILE,
+    # thumbnail file next to the video, reused as the Telegram video cover
+    'writethumbnail': True,
     # 'cookiesfrombrowser': 'chrome',
     # 'writethumbnail': True,
     # 'postprocessors': [{
@@ -109,8 +113,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return YOUTUBE_DOWNLOAD_STATE
                     for index, item in enumerate(items):
                         ydl.process_info(item)
-                        title = info_dict.get('title')
-                        ext = info_dict.get('ext')
+                        title = item.get('title')
+                        ext = item.get('ext')
                         filename = ydl.prepare_filename(item)
                         thumbnail_url = item.get("thumbnail")
                         with open(filename, "rb") as f:
@@ -134,12 +138,19 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     chat_id=update.effective_message.chat_id,
                                     action=ChatAction.UPLOAD_VIDEO,
                                 )
+                                # distinct InputFile per field: each needs its
+                                # own multipart part; the remote URL is webp,
+                                # which Telegram's thumbnail field rejects
+                                thumbnail_file = prepare_cover(filename)
+                                cover_file = prepare_cover(filename)
                                 await context.bot.send_video(
                                     chat_id=update.effective_chat.id, 
                                     video=f, 
                                     duration=duration, 
-                                    thumbnail=thumbnail_url, 
-                                    caption=BOT_ID, 
+                                    thumbnail=thumbnail_file if thumbnail_file is not None else thumbnail_url,
+                                    cover=cover_file,
+                                    caption=MEDIA_CAPTION.format(caption=escape_html(title or ""), bot_id=BOT_ID),
+                                    parse_mode=ParseMode.HTML,
                                     protect_content=True,
                                     reply_markup=keyboards.youtube_download_state_keyboard_rm, 
                                     supports_streaming=True
@@ -150,8 +161,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     chat_id=update.effective_message.chat_id,
                                     action=ChatAction.TYPING,
                                 )
-                                download_text = DIRECT_VIDEO_LINK.format(path=escape_html(prepare_link(filename)))
-                                await send_html_msg(context.bot, update.effective_chat.id, download_text, keyboards.youtube_download_state_keyboard_rm)
+                                link = prepare_link(filename)
+                                download_text = DIRECT_VIDEO_LINK.format(path=escape_html(link))
+                                copy_keyboard = InlineKeyboardMarkup(
+                                    keyboards.youtube_download_state_keyboard_rm.inline_keyboard
+                                    + [[CopyTextButton(COPY_LINK_BUTTON, data=link)]]
+                                )
+                                await send_html_msg(context.bot, update.effective_chat.id, download_text, copy_keyboard)
                                 await react_message(update, context.bot, "👍")
                 else:
                     ydl.process_info(info_dict)
@@ -180,12 +196,19 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 chat_id=update.effective_message.chat_id,
                                 action=ChatAction.UPLOAD_VIDEO,
                             )
+                            # distinct InputFile per field: each needs its
+                            # own multipart part; the remote URL is webp,
+                            # which Telegram's thumbnail field rejects
+                            thumbnail_file = prepare_cover(filename)
+                            cover_file = prepare_cover(filename)
                             await context.bot.send_video(
                                 chat_id=update.effective_chat.id, 
                                 video=f, 
                                 duration=duration, 
-                                thumbnail=thumbnail_url, 
-                                caption=BOT_ID, 
+                                thumbnail=thumbnail_file if thumbnail_file is not None else thumbnail_url,
+                                cover=cover_file,
+                                caption=MEDIA_CAPTION.format(caption=escape_html(title or ""), bot_id=BOT_ID),
+                                parse_mode=ParseMode.HTML,
                                 protect_content=True,
                                 reply_markup=keyboards.youtube_download_state_keyboard_rm, 
                                 supports_streaming=True
@@ -196,8 +219,13 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 chat_id=update.effective_message.chat_id,
                                 action=ChatAction.TYPING,
                             )
-                            download_text = DIRECT_VIDEO_LINK.format(path=escape_html(prepare_link(filename)))
-                            await send_html_msg(context.bot, update.effective_chat.id, download_text, keyboards.youtube_download_state_keyboard_rm)
+                            link = prepare_link(filename)
+                            download_text = DIRECT_VIDEO_LINK.format(path=escape_html(link))
+                            copy_keyboard = InlineKeyboardMarkup(
+                                keyboards.youtube_download_state_keyboard_rm.inline_keyboard
+                                + [[CopyTextButton(COPY_LINK_BUTTON, data=link)]]
+                            )
+                            await send_html_msg(context.bot, update.effective_chat.id, download_text, copy_keyboard)
                             await react_message(update, context.bot, "👍")
 
             except utils.DownloadError:

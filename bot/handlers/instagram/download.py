@@ -318,7 +318,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return INSTAGRAM_DOWNLOAD_STATE
         else:
             await react_message(update, context.bot, "👎")
-            await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.back_keyboard) # type: ignore
+            await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.instagram_download_state_keyboard_rm) # type: ignore
             return INSTAGRAM_DOWNLOAD_STATE
         
     elif message.startswith("@"):
@@ -340,7 +340,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_profile_picture_url = str(user_data["profile_pic_url_hd"])
             
             try:
-                await send_image(context.bot, update.effective_chat.id, user_profile_picture_url, keyboards.instagram_download_state_keyboard_rm)
+                await send_image(context.bot, update.effective_chat.id, user_profile_picture_url, keyboard=keyboards.instagram_download_state_keyboard_rm)
             except Exception:
                 await update.effective_user.send_document(
                     document=user_profile_picture_url,
@@ -354,9 +354,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                             chat_id=update.message.chat_id)
             await update.message.reply_text(
                 USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN,
-                reply_markup=keyboards.back_keyboard)
+                reply_markup=keyboards.instagram_download_state_keyboard_rm)
             return INSTAGRAM_DOWNLOAD_STATE
     else:
         await react_message(update, context.bot, "👎")
-        await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.back_keyboard)
+        await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.instagram_download_state_keyboard_rm)
         return INSTAGRAM_DOWNLOAD_STATE

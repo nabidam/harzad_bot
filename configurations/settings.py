@@ -29,12 +29,16 @@ WEBHOOK_OPTIONS = {
     "webhook_url": f"https://example.com/{TOKEN}",
 }
 
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-OPENAI_MODEL = os.environ["OPENAI_MODEL"]
+# Local LLM backend: any OpenAI-compatible server (vLLM, Ollama, LM Studio,
+# ...). LLM_BASE_URL points at the /v1 endpoint; LLM_MODEL must match an id
+# the server reports in GET {LLM_BASE_URL}/models. LLM_API_KEY may be a dummy
+# string for local servers that don't authenticate.
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://127.0.0.1:40002/v1")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
+LLM_MODEL = os.environ.get("LLM_MODEL", "gemma4")
 HF_TOKEN = os.environ["HF_TOKEN"]
 REPLICATE_API_TOKEN = os.environ["REPLICATE_API_TOKEN"]
 TOGETHER_API_KEY = os.environ["TOGETHER_API_KEY"]
-USE_OLLAMA = os.environ["USE_OLLAMA"] == "True"
 
 DB_URI = os.environ["DB_URI"]
 

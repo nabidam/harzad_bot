@@ -1,13 +1,15 @@
 import html
+import io
 import logging
 import os
 import random
-from telegram import ReactionTypeEmoji
+from telegram import InputFile, ReactionTypeEmoji
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ExtBot
 
 import re
+from PIL import Image
 from configurations.settings import HOST_ROOT, HOSTNAME, PROXY_LIST
 
 from utils.constants import LOGIN
@@ -93,3 +95,36 @@ def next_proxy():
 def prepare_link(path):
     # return urllib.parse.quote(url)
     return (path.replace(HOST_ROOT, HOSTNAME)).replace(" ", "%20")
+
+
+def prepare_cover(video_path):
+    """Prepare the yt-dlp thumbnail written next to a video for Telegram
+    (Bot API 8.3, used as both the inline `thumbnail` and the persistent
+    `cover`).
+
+    Covers must be a JPEG under 512x512 px and 200 KB, so the image is
+    downscaled and re-encoded in memory. yt-dlp names the thumbnail after
+    the video with a .jpg/.jpeg/.webp/.png extension (YouTube currently
+    serves .webp). Returns a fresh in-memory InputFile, or None when no
+    thumbnail exists — the video then ships without one instead of failing.
+    """
+    base = os.path.splitext(video_path)[0]
+    thumb = next(
+        (base + ext for ext in (".jpg", ".jpeg", ".webp", ".png") if os.path.isfile(base + ext)),
+        None,
+    )
+    if thumb is None:
+        return None
+    try:
+        img = Image.open(thumb).convert("RGB")
+        img.thumbnail((480, 480), Image.LANCZOS)
+        buf = io.BytesIO()
+        for quality in (85, 70, 55):
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+            if buf.tell() <= 190_000:
+                break
+        return InputFile(buf.getvalue(), filename="cover.jpg")
+    except Exception:
+        logging.getLogger(__name__).debug("Could not prepare cover from %s", thumb, exc_info=True)
+        return None

@@ -1,4 +1,5 @@
 # coding: utf-8
+import io
 import os
 import signal
 import sys
@@ -6,10 +7,11 @@ from importlib import import_module
 from datetime import datetime
 from logging import getLogger
 
-from telegram import Update, BotCommand
-from telegram.ext import ApplicationBuilder, ContextTypes, Application, PicklePersistence
+from telegram import Update, BotCommand, InputFile, InputProfilePhotoStatic
+from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ContextTypes, Application, PicklePersistence
+from PIL import Image
 from bot.conversations.main import main_conversation_handler
-from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY
+from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
 from utils.constants.messages import SOMETHING_WENT_WRONG
 
 import configurations.settings as settings
@@ -38,6 +40,45 @@ async def post_init(application: Application):
         "and can chat or generate images with AI. Send /start to begin."
     )
     await bot.set_my_short_description("Media downloader + AI 🎧🎞🤖")
+    await set_profile_photo(bot)
+
+
+async def set_profile_photo(bot) -> None:
+    """Set the bot's public profile photo from assets/logo.png (Bot API 9.4).
+
+    Telegram requires a square JPEG of at most 512x512 px and 5 MB, so the
+    1254x1254 source PNG is downscaled in memory. Idempotent — safe to run
+    at every boot, and a failure never blocks startup.
+    """
+    logo_path = os.path.join(SCRIPT_DIR, "assets", "logo.png")
+    try:
+        img = Image.open(logo_path).convert("RGB")
+        img = img.resize((512, 512), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        await bot.set_my_profile_photo(
+            InputProfilePhotoStatic(
+                # attach=True: the nested photo field must be an attach://
+                # reference to the multipart file part, not a raw upload.
+                InputFile(buf.getvalue(), filename="profile.jpg", attach=True)
+            )
+        )
+        logger.info("Profile photo set from %s", logo_path)
+    except Exception:
+        logger.warning("Could not set profile photo from %s", logo_path, exc_info=True)
+
+
+async def answer_stray_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Group-1 catch-all for inline-button clicks.
+
+    Inline buttons stay clickable forever after they are sent. If the user
+    clicks one while no conversation is active (never sent /start), the
+    conversation handler in group 0 does not match the update — without this,
+    nobody calls answerCallbackQuery and the client's button spinner hangs.
+    """
+    cq = update.callback_query
+    if cq is not None:
+        await cq.answer()
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -94,6 +135,9 @@ if __name__ == "__main__":
                    .token(settings.TOKEN)
                 #    .context_types(context_types)
                    .post_init(post_init)
+                   # egress goes through a flaky proxy: tolerate slow/failed
+                   # bootstraps instead of dying on the first attempt
+                   .connect_timeout(30)
                    .read_timeout(50)
                    .write_timeout(50)
                    .get_updates_read_timeout(50)
@@ -104,6 +148,14 @@ if __name__ == "__main__":
     application.bot_data["spotdl_instance"] = spotdl_instance
 
     application.add_handler(main_conversation_handler())
+    # Group 1: if no conversation is active yet (user never sent /start),
+    # the conversation in group 0 ignores the update and this catch-all
+    # answers the click so the client's button spinner doesn't hang.
+    # When the conversation does handle a callback (block=True), this group
+    # is skipped, so there is no double handling.
+    application.add_handler(CallbackQueryHandler(answer_stray_callback), group=1)
     application.add_error_handler(on_error)
 
-    application.run_polling()
+    # bootstrap_retries: -1 = keep retrying while the (flaky) proxy is down,
+    # instead of dying on the first failed getMe
+    application.run_polling(bootstrap_retries=-1)
