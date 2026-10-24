@@ -6,7 +6,7 @@ description = "Harzad: Telegram bot built with python-telegram-bot"
 requires-python = ">=3.12,<3.13"
 license = { text = "The Unlicense" }
 dependencies = [
-    "python-telegram-bot>=21,<22",
+    "python-telegram-bot>=22,<23",
     "python-dotenv>=1.0,<2",
     "sqlalchemy>=2.0,<3",
     "alembic>=1.14,<2",
