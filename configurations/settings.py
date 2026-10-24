@@ -39,3 +39,4 @@ USE_OLLAMA = os.environ["USE_OLLAMA"] == "True"
 DB_URI = os.environ["DB_URI"]
 
 YT_COOKIE_FILE = os.environ["YT_COOKIE_FILE"]
+YT_PROXY = os.environ["YT_PROXY"]

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from telegram.ext import ApplicationBuilder, ContextTypes, Application, PicklePersistence
 from bot.conversations.main import main_conversation_handler
-from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE
+from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY
 
 import configurations.settings as settings
 from connectors.spotdl import create_spotdl_instance
@@ -34,8 +34,7 @@ if __name__ == "__main__":
     
     downloader_settings = {
         "simple_tui": True,
-        "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --impersonate chrome --force-ipv4 --proxy socks5://127.0.0.1:40000",
-        # "yt_dlp_args": f"--proxy socks5://127.0.0.1:40000",
+        "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --impersonate chrome --force-ipv4 --proxy {YT_PROXY}",
         "output": DOWNLOAD_MP3_PATH,
         #"lyrics_providers": ["genius", "musixmatch"],
         "parallel_downloads": 1

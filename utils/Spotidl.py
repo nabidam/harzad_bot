@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-from configurations.settings import DOWNLOAD_MP3_PATH, YT_COOKIE_FILE
+from configurations.settings import DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY
 
 from spotdl._version import __version__
 from spotdl.console import console_entry_point
@@ -71,8 +71,8 @@ class Spotidl:
         if downloader_settings is None:
             downloader_settings = {
                 "simple_tui": True,
-                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --force-ipv4 --proxy socks5://127.0.0.1:40000",
-                # "yt_dlp_args": f"--proxy socks5://127.0.0.1:40000",
+                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --force-ipv4 --proxy {YT_PROXY}",
+                # "yt_dlp_args": f"--proxy http://127.0.0.1:10808",
                 "output": DOWNLOAD_MP3_PATH,
                 #"lyrics_providers": ["genius", "musixmatch"]
             }
