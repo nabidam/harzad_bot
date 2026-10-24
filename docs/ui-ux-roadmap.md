@@ -64,7 +64,24 @@ Target: the standard modern-bot navigation pattern.
 - Keep `ConversationHandler` (it works with callback queries unchanged).
 - Scope: `utils/keyboards.py`, `bot/conversations/main.py`, all handler entry points.
 
-Gate: full click-through of every section (no typing at all) + one real download.
+Implemented 2026-10-24 on `inline-keyboards` branch:
+
+- `CB_*` callback-data constants in `utils/constants/keyboards.py`; callback data
+  names the destination (`nav:yt`, `nav:ig`, …).
+- All keyboards rebuilt as `InlineKeyboardMarkup` in `utils/keyboards.py`;
+  action/section buttons use `style="primary"`, Back/Home neutral.
+- Single dispatcher `navigate()` in `bot/navigation.py` (NAVIGATOR table):
+  in-place `editMessageText` when the current message is text, fresh menu on
+  media messages, `answer_callback_query` always, "not modified" swallowed.
+  Registered as `CallbackQueryHandler` first in all 12 states; stray callbacks
+  answered by a group-1 handler in `main.py`.
+- Old reply-keyboard menu/`before_*` modules left in place as dead code
+  (deletion needs separate approval).
+
+Gate: **PASSED 2026-10-24.** Full click-through of every section plus real
+YouTube download verified live in Telegram — in-place menu edits, video arrives
+as a true `video` message (player + streaming + cover), caption carries the
+video title, `>50MB` fallback offers a one-tap copy-link button.
 
 ### Phase B — Telegram Mini App (Web App) (last, separate project)
 
@@ -91,3 +108,22 @@ Gate: auth round-trip + one download completed from inside the Web App.
   Also pre-existing latent bugs: `filters.TEXT` shadowed `/start` in every
   substate, and yt-dlp resolves a bare domain URL to an empty "recommended"
   playlist, which silently hung the progress message.
+- 2026-10-24: Audited Bot API 7.0 → 10.3 against PTB 22.8 (newest release);
+  results in `docs/bot-api-feature-opportunities.md`. Button color styles
+  (9.4) adopted in Phase A. AI chat backend switched from dead Ollama to the
+  local vLLM server (`LLM_BASE_URL=http://127.0.0.1:40002/v1`, model
+  `gemma4`), deprecated `LLMChain` removed, call now async (`ainvoke`).
+- 2026-10-24: Phase A gate passed and merged to `main`. Live testing found more
+  Bot API landmines: `sendVideo` demotes webm uploads to plain `document`
+  (no player/cover) → YouTube format is now mp4-only
+  (`bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]`), no ffmpeg transcode;
+  yt-dlp writes YouTube thumbnails as `.webp`, which both `thumbnail` and
+  `cover` reject → local re-encode to a small JPEG (`prepare_cover`);
+  `setMyProfilePhoto` needs `InputProfilePhotoStatic` wrapping an
+  `InputFile(..., attach=True)`; a flaky proxy killed first-boot
+  `getMe` (builder default `bootstrap_retries=0`) → `run_polling(bootstrap_retries=-1)`.
+  Also fixed: media captions were bot-id-only → now carry the video title
+  (playlist loop previously used the playlist title for every item).
+  Known open item: the `>50MB` link fallback points at `HOSTNAME` which is
+  `http://localhost/` in `.env` — dead from outside; copy button makes it
+  one-tap until a real host is configured.

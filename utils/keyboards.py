@@ -1,38 +1,87 @@
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from utils.constants.keyboards import *
-from telegram import ReplyKeyboardMarkup
 
-back_keyboard = [[BACK_KEYBOARD]]
-back_keyboard_rm = ReplyKeyboardMarkup(back_keyboard, resize_keyboard=True)
+# Bot API 9.4 (2026-02-09) button styles. Clients released before that date
+# ignore the field and render the default style, so this is safe to ship.
+#
+# Design rule: action buttons (the thing the user actually does) get the
+# `primary` blue style; Back/Home navigation stays neutral so the eye goes
+# to the action first.
+ACTION_STYLE = "primary"
 
-start_keyboard = [[INSTAGRAM_KEYBOARD], [MUSIC_KEYBOARD], [PINTEREST_KEYBOARD], [YOUTUBE_KEYBOARD], [AI_KEYBOARD]]
-start_keyboard_rm = ReplyKeyboardMarkup(start_keyboard, resize_keyboard=True)
 
-instagram_state_keyboard = [[INSTAGRAM_DOWNLOAD_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
-instagram_state_keyboard_rm = ReplyKeyboardMarkup(instagram_state_keyboard, resize_keyboard=True)
+def _action(label: str, cb: str) -> InlineKeyboardButton:
+    """A blue action button — the primary thing to do on the screen."""
+    return InlineKeyboardButton(label, callback_data=cb, style=ACTION_STYLE)
 
-instagram_download_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
-instagram_download_state_keyboard_rm = ReplyKeyboardMarkup(instagram_download_state_keyboard, resize_keyboard=True)
 
-music_state_keyboard = [[MUSIC_SPOTIFY_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
-music_state_keyboard_rm = ReplyKeyboardMarkup(music_state_keyboard, resize_keyboard=True)
+def _back_home(back_cb: str):
+    """Back/Home row for the keyboard that follows a prompt screen."""
+    return [
+        InlineKeyboardButton(BACK_KEYBOARD, callback_data=back_cb),
+        InlineKeyboardButton(HOME_KEYBOARD, callback_data=CB_START),
+    ]
 
-music_spotify_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
-music_spotify_state_keyboard_rm = ReplyKeyboardMarkup(music_spotify_state_keyboard, resize_keyboard=True)
 
-pinterest_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
-pinterest_state_keyboard_rm = ReplyKeyboardMarkup(pinterest_state_keyboard, resize_keyboard=True)
+start_keyboard_rm = InlineKeyboardMarkup([
+    [_action(INSTAGRAM_KEYBOARD, CB_INSTAGRAM)],
+    [_action(MUSIC_KEYBOARD, CB_MUSIC)],
+    [_action(PINTEREST_KEYBOARD, CB_PINTEREST)],
+    [_action(YOUTUBE_KEYBOARD, CB_YOUTUBE)],
+    [_action(AI_KEYBOARD, CB_AI)],
+])
 
-youtube_state_keyboard = [[YOUTUBE_DOWNLOAD_KEYBOARD, YOUTUBE_MP3_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
-youtube_state_keyboard_rm = ReplyKeyboardMarkup(youtube_state_keyboard, resize_keyboard=True)
+instagram_state_keyboard_rm = InlineKeyboardMarkup([
+    [_action(INSTAGRAM_DOWNLOAD_KEYBOARD, CB_INSTAGRAM_DOWNLOAD)],
+    _back_home(CB_START),
+])
 
-youtube_download_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
-youtube_download_state_keyboard_rm = ReplyKeyboardMarkup(youtube_download_state_keyboard, resize_keyboard=True)
+instagram_download_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_INSTAGRAM),
+])
 
-ai_state_keyboard = [[AI_CHAT_KEYBOARD, AI_TTI_KEYBOARD], [BACK_KEYBOARD, HOME_KEYBOARD]]
-ai_state_keyboard_rm = ReplyKeyboardMarkup(ai_state_keyboard, resize_keyboard=True)
+music_state_keyboard_rm = InlineKeyboardMarkup([
+    [_action(MUSIC_SPOTIFY_KEYBOARD, CB_MUSIC_SPOTIFY)],
+    _back_home(CB_START),
+])
 
-ai_chat_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
-ai_chat_state_keyboard_rm = ReplyKeyboardMarkup(ai_chat_state_keyboard, resize_keyboard=True)
+music_spotify_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_MUSIC),
+])
 
-ai_tti_state_keyboard = [[BACK_KEYBOARD, HOME_KEYBOARD]]
-ai_tti_state_keyboard_rm = ReplyKeyboardMarkup(ai_tti_state_keyboard, resize_keyboard=True)
+pinterest_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_START),
+])
+
+youtube_state_keyboard_rm = InlineKeyboardMarkup([
+    [
+        _action(YOUTUBE_DOWNLOAD_KEYBOARD, CB_YOUTUBE_DOWNLOAD),
+        _action(YOUTUBE_MP3_KEYBOARD, CB_YOUTUBE_MP3),
+    ],
+    _back_home(CB_START),
+])
+
+youtube_download_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_YOUTUBE),
+])
+
+youtube_mp3_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_YOUTUBE),
+])
+
+ai_state_keyboard_rm = InlineKeyboardMarkup([
+    [
+        _action(AI_CHAT_KEYBOARD, CB_AI_CHAT),
+        _action(AI_TTI_KEYBOARD, CB_AI_TTI),
+    ],
+    _back_home(CB_START),
+])
+
+ai_chat_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_AI),
+])
+
+ai_tti_state_keyboard_rm = InlineKeyboardMarkup([
+    _back_home(CB_AI),
+])
