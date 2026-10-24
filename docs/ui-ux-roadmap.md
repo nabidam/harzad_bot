@@ -87,14 +87,25 @@ video title, `>50MB` fallback offers a one-tap copy-link button.
 
 Target: the app-like feel of major 2025+ bots.
 
-- Small HTML/JS frontend hosted on HTTPS (Vercel / GitHub Pages).
+- Small HTML/JS frontend (SPA) + JSON API served by an aiohttp server
+  **embedded in the bot process** — single origin, required by Bot API 10.2's
+  menu-button origin lock. Public exposure via a free `localhost.run` SSH
+  reverse tunnel (no VPS/Vercel: they can't reach the loopback vLLM / yt-dlp
+  proxy path). A tunnel watchdog auto-reconnects and re-syncs the URL.
 - Opened from a persistent **chat menu button** (`set_chat_menu_button`,
-  `MenuButtonWebApp`) and/or an "Open App" inline button.
-- Telegram theme variables (auto dark/light), `initData` user auth,
-  media sent via the Telegram Web Apps JS SDK.
-- Best fit for heavy flows: AI chat input, download options with forms/toggles.
+  `MenuButtonWebApp`), re-registered from `.env` at every boot.
+- Telegram theme variables (auto dark/light), `initData` HMAC auth
+  (WebAppData scheme), browser/anonymous fallback mode outside Telegram.
+- v1 scope: **Download tab** (YouTube link → job → video delivered to the
+  chat + `tg.downloadFile` "Save to device") and **AI chat tab** (local vLLM).
 
 Gate: auth round-trip + one download completed from inside the Web App.
+Gate: **PASSED 2026-10-24.** Real phone (Telegram-Android 13.1.0): initData
+verified (`user_id=575570675`, name displayed), AI chat round-trip OK, and a
+full download from the Download tab ("Deadlock Tips For Noobs #11", 8.3 MB
+mp4) delivered to the chat as a playable video (`sendVideo` with cover,
+message 9996). "Save to device" streams via `Content-Disposition:
+attachment` + CORS for `https://web.telegram.org` (Range-capable).
 
 ## Decision log
 
@@ -127,3 +138,24 @@ Gate: auth round-trip + one download completed from inside the Web App.
   Known open item: the `>50MB` link fallback points at `HOSTNAME` which is
   `http://localhost/` in `.env` — dead from outside; copy button makes it
   one-tap until a real host is configured.
+- 2026-10-24: Phase B hosting settled on the free `localhost.run` SSH
+  reverse tunnel (user rejected VPS/Vercel). A watchdog script supervises
+  the tunnel: auto-reconnect, URL extraction, `.env` sync, bot restart,
+  heartbeat. Live operation showed localhost.run **re-issues a new URL
+  mid-session (~every 20 min)** — the old one dies instantly with
+  "no tunnel"/502 — so the watchdog polls for fresh URL lines and
+  re-syncs the bot on every change, not just on process death. The bot and
+  watchdog must run detached (`setsid`): the harness reaped a background
+  shell's whole process group once, killing bot + ssh + watchdog together.
+  Known open item: the URL still changes on every real drop; a stable
+  free/paid domain is the post-gate hardening.
+- 2026-10-24: Phase B gate passed (phone: auth + AI chat + real download,
+  see gate above). Live phone testing found: (1) current Telegram clients
+  no longer embed `auth_date` in the `user` object — the freshness check
+  must read the **top-level `auth_date` param** (the hash had been passing
+  all along; only the TTL read was stale-shaped); (2) the client blob now
+  carries an undocumented `signature` param — the verifier hashes all
+  params except `hash` generically, so it matches without special-casing;
+  (3) the SPA labelled assistant turns `role: "bot"`, which LangChain
+  message tuples reject → server normalizes roles (`bot`→`assistant`,
+  `user`→`human`).

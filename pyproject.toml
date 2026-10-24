@@ -27,6 +27,7 @@ dependencies = [
     "requests>=2.32",
     # Bundles the ffmpeg binary, needed at runtime by moviepy/pydub
     "ffmpeg==1.4",
+    "aiohttp>=3.14.5",
 ]
 
 [dependency-groups]

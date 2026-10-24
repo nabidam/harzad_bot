@@ -7,12 +7,13 @@ from importlib import import_module
 from datetime import datetime
 from logging import getLogger
 
-from telegram import Update, BotCommand, InputFile, InputProfilePhotoStatic
+from telegram import Update, BotCommand, InputFile, InputProfilePhotoStatic, MenuButtonWebApp, WebAppInfo
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ContextTypes, Application, PicklePersistence
 from PIL import Image
 from bot.conversations.main import main_conversation_handler
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
 from utils.constants.messages import SOMETHING_WENT_WRONG
+from web.app import start_server
 
 import configurations.settings as settings
 from connectors.spotdl import create_spotdl_instance
@@ -41,6 +42,40 @@ async def post_init(application: Application):
     )
     await bot.set_my_short_description("Media downloader + AI 🎧🎞🤖")
     await set_profile_photo(bot)
+    await start_mini_app(application)
+
+
+async def start_mini_app(application: Application) -> None:
+    """Start the Mini App web server and (re)set the chat menu button.
+
+    The server always starts (loopback-only, harmless when idle); the menu
+    button is only set when MINIAPP_URL is configured, because the tunnel
+    domain can change between restarts and is re-read from env at every boot.
+    A failure never blocks startup — the bot keeps running without the app.
+    """
+    try:
+        await start_server(
+            application.bot,
+            settings.WEB_HOST,
+            settings.WEB_PORT,
+            settings.MINIAPP_URL,
+        )
+    except Exception:
+        logger.warning("Could not start the Mini App web server", exc_info=True)
+        return
+    if settings.MINIAPP_URL:
+        try:
+            await application.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="Open Harzad",
+                    web_app=WebAppInfo(url=settings.MINIAPP_URL),
+                )
+            )
+            logger.info("Chat menu button → %s", settings.MINIAPP_URL)
+        except Exception:
+            logger.warning("Could not set the chat menu button", exc_info=True)
+    else:
+        logger.info("MINIAPP_URL not set — web server up, menu button disabled")
 
 
 async def set_profile_photo(bot) -> None:
