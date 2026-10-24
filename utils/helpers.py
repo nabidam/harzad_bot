@@ -1,7 +1,10 @@
 import html
+import logging
 import os
 import random
+from telegram import ReactionTypeEmoji
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import ExtBot
 
 import re
@@ -27,6 +30,24 @@ def create_requirement_folders():
 
 def stringify_none_str(str):
     return str if str is not None else ""
+
+async def react_message(update, bot: ExtBot, emoji: str):
+    """Add an emoji reaction to the update's message (Bot API 6.0).
+
+    Reactions are decorative: Telegram only accepts emoji from its
+    reaction set (anything else -> BadRequest: Reaction_invalid), so
+    swallow the error instead of breaking the handler flow.
+    """
+    if update.effective_message is None or update.effective_chat is None:
+        return
+    try:
+        await bot.set_message_reaction(
+            chat_id=update.effective_chat.id,
+            message_id=update.effective_message.message_id,
+            reaction=ReactionTypeEmoji(emoji=emoji),
+        )
+    except TelegramError as err:
+        logging.warning(f"Could not set reaction {emoji!r}: {err}")
 
 def escape_md(text):
     escape_chars = r"\_*[]()~>#+-=|{}.!"

@@ -17,7 +17,7 @@ from utils.constants.messages import AI_PROMPT_FOR_CAPTION, PROCESSING
 from utils.constants.states import AI_TTI_STATE
 
 from utils.decorators import send_action, sync_user, log_message
-from utils.helpers import escape_html, prepare_link, send_image
+from utils.helpers import escape_html, prepare_link, react_message, send_image
 from utils import keyboards
 
 # Init logger
@@ -68,6 +68,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     caption = AI_PROMPT_FOR_CAPTION.format(prompt=escape_html(message))
     await send_image(context.bot, update.effective_chat.id, image_content, caption, keyboards.ai_tti_state_keyboard_rm)
-    await update.message.react(emoji="✅")
+    await react_message(update, context.bot, "👍")
 
     return AI_TTI_STATE

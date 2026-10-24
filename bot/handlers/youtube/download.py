@@ -14,7 +14,7 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PI
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
-from utils.helpers import escape_html, prepare_link, send_html_msg
+from utils.helpers import escape_html, prepare_link, react_message, send_html_msg
 from utils import keyboards
 
 from utils.instagram import get_user_client_instagram
@@ -70,7 +70,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=GETTING_MEDIA_INFORMATION,
             )
 
-            info_dict = ydl.extract_info(message, download=False)
+            try:
+                info_dict = ydl.extract_info(message, download=False)
+            except utils.DownloadError:
+                await react_message(update, context.bot, "👎")
+                await context.bot.editMessageText(
+                    message_id=bot_message.message_id,
+                    chat_id=update.message.chat_id,
+                    text=SOMETHING_WENT_WRONG,
+                )
+                return YOUTUBE_DOWNLOAD_STATE
             
             is_playlist = info_dict.get("_type") == PLAYLIST
 
@@ -90,6 +99,14 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if is_playlist:
                     items = info_dict.get('entries')
+                    if not items:
+                        await react_message(update, context.bot, "👎")
+                        await context.bot.editMessageText(
+                            message_id=bot_message.message_id,
+                            chat_id=update.message.chat_id,
+                            text=SOMETHING_WENT_WRONG,
+                        )
+                        return YOUTUBE_DOWNLOAD_STATE
                     for index, item in enumerate(items):
                         ydl.process_info(item)
                         title = info_dict.get('title')
@@ -127,7 +144,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     reply_markup=keyboards.youtube_download_state_keyboard_rm, 
                                     supports_streaming=True
                                 )
-                                await update.message.react(emoji="✅")
+                                await react_message(update, context.bot, "👍")
                             else:
                                 await context.bot.send_chat_action(
                                     chat_id=update.effective_message.chat_id,
@@ -135,7 +152,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
                                 download_text = DIRECT_VIDEO_LINK.format(path=escape_html(prepare_link(filename)))
                                 await send_html_msg(context.bot, update.effective_chat.id, download_text, keyboards.youtube_download_state_keyboard_rm)
-                                await update.message.react(emoji="✅")
+                                await react_message(update, context.bot, "👍")
                 else:
                     ydl.process_info(info_dict)
                     title = info_dict.get('title')
@@ -173,7 +190,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 reply_markup=keyboards.youtube_download_state_keyboard_rm, 
                                 supports_streaming=True
                             )
-                            await update.message.react(emoji="✅")
+                            await react_message(update, context.bot, "👍")
                         else:
                             await context.bot.send_chat_action(
                                 chat_id=update.effective_message.chat_id,
@@ -181,23 +198,21 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )
                             download_text = DIRECT_VIDEO_LINK.format(path=escape_html(prepare_link(filename)))
                             await send_html_msg(context.bot, update.effective_chat.id, download_text, keyboards.youtube_download_state_keyboard_rm)
-                            await update.message.react(emoji="✅")
+                            await react_message(update, context.bot, "👍")
 
             except utils.DownloadError:
-                await update.message.react(emoji="❌")
+                await react_message(update, context.bot, "👎")
                 await context.bot.editMessageText(
                     message_id=bot_message.message_id,
                     chat_id=update.message.chat_id,
                     text=SOMETHING_WENT_WRONG,
-                    reply_markup=keyboards.youtube_download_state_keyboard_rm,
                 )
     else:
-        await update.message.react(emoji="❌")
+        await react_message(update, context.bot, "👎")
         await context.bot.editMessageText(
             message_id=bot_message.message_id,
             chat_id=update.message.chat_id,
             text=LINK_IS_INVALID,
-            reply_markup=keyboards.youtube_download_state_keyboard_rm,
         )
     # else:
     #     await context.bot.editMessageText(

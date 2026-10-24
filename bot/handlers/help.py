@@ -19,5 +19,6 @@ logger = getLogger(__name__)
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process a /help command."""
     assert update.effective_chat is not None
-    
+
     await send_html_msg(context.bot, update.effective_chat.id, HELP, keyboards.start_keyboard_rm)
+    return START_STATE

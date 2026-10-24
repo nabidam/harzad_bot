@@ -14,6 +14,7 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PI
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
 from utils import keyboards
+from utils.helpers import react_message
 
 from instagrapi.exceptions import MediaNotFound
 from instagrapi.exceptions import UnknownError
@@ -69,7 +70,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=GETTING_MEDIA_INFORMATION,
             )
 
-            info_dict = ydl.extract_info(message, download=False)
+            try:
+                info_dict = ydl.extract_info(message, download=False)
+            except utils.DownloadError:
+                await react_message(update, context.bot, "👎")
+                await context.bot.editMessageText(
+                    message_id=bot_message.message_id,
+                    chat_id=update.message.chat_id,
+                    text=SOMETHING_WENT_WRONG,
+                )
+                return PINTEREST_STATE
             
             title = info_dict.get('title')
             ext = info_dict.get('ext')
@@ -113,17 +123,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=keyboards.pinterest_state_keyboard_rm, 
                         supports_streaming=True
                     )
-                    await update.message.react(emoji="✅")
+                    await react_message(update, context.bot, "👍")
             except utils.DownloadError:
-                await update.message.react(emoji="❌")
+                await react_message(update, context.bot, "👎")
                 await context.bot.editMessageText(
                     message_id=bot_message.message_id,
                     chat_id=update.message.chat_id,
                     text=SOMETHING_WENT_WRONG,
-                    reply_markup=keyboards.pinterest_state_keyboard_rm,
                 )
     else:
-        await update.message.react(emoji="❌")
+        await react_message(update, context.bot, "👎")
         await context.bot.editMessageText(
             message_id=bot_message.message_id,
             chat_id=update.message.chat_id,

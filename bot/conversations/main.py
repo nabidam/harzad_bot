@@ -15,87 +15,101 @@ def main_conversation_handler():
     """Process a /start command."""
     conversation_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start.handler)],
+        # In every state, shared_handlers (/start, /help) must come first:
+        # /start is text, so a filters.TEXT handler registered before it
+        # would shadow the command and eat the message.
         states={
             START_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{INSTAGRAM_KEYBOARD}$"), instagram.handler),
                 MessageHandler(filters.Regex(f"^{MUSIC_KEYBOARD}$"), music.handler),
                 MessageHandler(filters.Regex(f"^{PINTEREST_KEYBOARD}$"), pinterest.handler),
                 MessageHandler(filters.Regex(f"^{YOUTUBE_KEYBOARD}$"), youtube.handler),
                 MessageHandler(filters.Regex(f"^{AI_KEYBOARD}$"), ai.handler),
-                *shared_handlers.shared_handlers
             ],
 
             INSTAGRAM_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{INSTAGRAM_DOWNLOAD_KEYBOARD}$"), before_download.handler),
-                *shared_handlers.shared_handlers
             ],
             INSTAGRAM_DOWNLOAD_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), instagram.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, download.handler),
-                *shared_handlers.shared_handlers
             ],
 
             MUSIC_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{MUSIC_SPOTIFY_KEYBOARD}$"), spotify.handler),
-                *shared_handlers.shared_handlers
             ],
             MUSIC_SPOTIFY_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), music.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, spotify_download.handler),
-                *shared_handlers.shared_handlers
             ],
 
             PINTEREST_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, pinterest_download.handler),
-                *shared_handlers.shared_handlers
             ],
 
             YOUTUBE_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{YOUTUBE_DOWNLOAD_KEYBOARD}$"), youtube_before_download.handler),
                 MessageHandler(filters.Regex(f"^{YOUTUBE_MP3_KEYBOARD}$"), youtube_before_mp3.handler),
-                *shared_handlers.shared_handlers
             ],
             YOUTUBE_DOWNLOAD_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), youtube.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, youtube_download.handler),
-                *shared_handlers.shared_handlers
             ],
             YOUTUBE_MP3_STATE: [
+                *shared_handlers.shared_handlers,
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), youtube.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, youtube_mp3.handler),
-                *shared_handlers.shared_handlers
             ],
             
             AI_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.Regex(f"^{AI_CHAT_KEYBOARD}$"), before_chat.handler),
                 MessageHandler(filters.Regex(f"^{AI_TTI_KEYBOARD}$"), before_tti.handler),
-                *shared_handlers.shared_handlers
             ],
             AI_CHAT_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), ai.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, chat.handler),
-                *shared_handlers.shared_handlers
             ],
             AI_TTI_STATE: [
+                *shared_handlers.shared_handlers,
+
                 MessageHandler(filters.Regex(f"^{BACK_KEYBOARD}$"), ai.handler),
                 MessageHandler(filters.Regex(f"^{HOME_KEYBOARD}$"), start.handler),
                 MessageHandler(filters.TEXT, tti.handler),
-                *shared_handlers.shared_handlers
             ],
         },
         fallbacks=[],

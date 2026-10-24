@@ -15,7 +15,7 @@ from utils.constants.messages import SOMETHING_WENT_WRONG
 import configurations.settings as settings
 from connectors.spotdl import create_spotdl_instance
 from utils.custom_context import MyContext
-from utils.helpers import create_requirement_folders
+from utils.helpers import create_requirement_folders, react_message
 from utils.logger import init_logger
 from spotdl import SpotifyClient, Spotdl
 
@@ -49,7 +49,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Unhandled exception while handling update", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message is not None:
         try:
-            await update.effective_message.react(emoji="❌")
+            await react_message(update, context.bot, "👎")
             await update.effective_message.reply_text(SOMETHING_WENT_WRONG)
         except Exception:
             logger.debug("Could not notify the user about the error", exc_info=True)
