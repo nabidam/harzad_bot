@@ -1,7 +1,15 @@
 .PHONY: start
 start:
-	poetry run python main.py
+	uv run python main.py
 
 .PHONY: shell
 shell:
-	poetry shell
+	uv shell
+
+.PHONY: sync
+sync:
+	uv sync
+
+.PHONY: lock
+lock:
+	uv lock

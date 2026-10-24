@@ -14,7 +14,7 @@
 
 This bot is a template for telegram bots in Python. The goal is to facilitate and speed up the bot developing process.
 
-This project has been developed using Python 3.7 and assumes that you use [Poetry](https://python-poetry.org/) as the dependency manager.
+This project requires Python 3.12 and uses [uv](https://docs.astral.sh/uv/) as the dependency manager.
 
 The project uses [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) as the underlying technology.
 
@@ -37,7 +37,7 @@ The project also allows you to deploy the bot as a webhook or polling bot.
 ├── LICENSE
 ├── main.py
 ├── pyproject.toml
-├── poetry.lock
+├── uv.lock
 └── README.md
 ```
 
@@ -50,7 +50,7 @@ Let's see how this project is structured:
 - utils: Bot utils files. For example, files containing sets of helper functions.
 - LICENSE: Just the license file. You may want to change it for your project.
 - main.py: The project entry point.
-- pyproject.toml and poetry.lock: Dependencies files used by poetry.
+- pyproject.toml and uv.lock: Dependency files used by uv.
 - README.md: This file.
 
 ## Let's begin
@@ -70,11 +70,13 @@ First, create a bot for having a *token*. You can register your bot by following
 
 ## Installing dependencies
 
-Now that you (surely) have poetry installed, run
+Now that you (surely) have [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, run
 ```bash
-poetry install
+uv sync
 ```
 from the project directory
+
+uv creates a `.venv` with Python 3.12 (it downloads the interpreter itself if you don't have one). To run anything with the project environment, prefix it with `uv run`, e.g. `uv run python main.py`.
 
 ## Edit config file
 
