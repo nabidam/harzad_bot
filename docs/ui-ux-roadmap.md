@@ -29,24 +29,29 @@ Known weaknesses:
 
 Target: the bot *feels* modern without changing its architecture.
 
-- [ ] **HTML parse mode for bot messages** — new `send_html_msg` helper; user-provided
+- [x] **HTML parse mode for bot messages** — new `send_html_msg` helper; user-provided
       data escaped with `escape_html()`; live templates converted from MarkdownV2 to HTML
       (`<b>`, `<code>`). Fixes the double-escape mess (#1).
-- [ ] **Cleaner `/start` onboarding** — reworded greeting (no raw command echo),
+- [x] **Cleaner `/start` onboarding** — reworded greeting (no raw command echo),
       HTML formatting, menu below.
-- [ ] **Real `/help` text** — replaces the placeholder "This is a help message".
-- [ ] **Caption on media** — photo/video/audio carry their caption directly
+- [x] **Real `/help` text** — replaces the placeholder "This is a help message".
+- [x] **Caption on media** — photo/video/audio carry their caption directly
       (one message instead of two), keyboard attached to the media message (#2).
-- [ ] **`protect_content` on all sent media** — downloaded content can't be forwarded
+- [x] **`protect_content` on all sent media** — downloaded content can't be forwarded
       or saved-as from the chat.
-- [ ] **Reactions** — ✅ when a task succeeds, ❌ on failures (soft and unhandled).
-- [ ] **Global error handler** — logs the full traceback and replies
-      "Something went wrong 🤯" + ❌ reaction instead of silently dropping (#3).
-- [ ] **Bot profile** — `set_my_commands` with command descriptions,
-      `set_my_description`, `set_my_short_description` (Bot API 6.0/7.0).
-- [ ] **Bug fixes** — instagram fallthrough (#5), wrong keyboard in youtube handlers (#6).
+- [x] **Reactions** — 👍 when a task succeeds, 👎 on failures. (✅/❌ turned out to be
+      rejected by Telegram — `Reaction_invalid`; only reaction-picker emojis are allowed.
+      Reactions go through a defensive `react_message()` helper that never raises.)
+- [x] **Global error handler** — logs the full traceback and replies
+      "Something went wrong 🤯" + 👎 reaction instead of silently dropping (#3).
+- [x] **Bug fixes** — instagram fallthrough (#5), wrong keyboard in youtube handlers (#6),
+      `/start` shadowed by `filters.TEXT` in substates, `/help` stranded the state,
+      `ydl.extract_info` unguarded, empty-playlist hang (bare `https://youtube.com`),
+      reply keyboards attached to `editMessageText` (400 `Inline keyboard expected`).
 
-Gate: `/start`, `/help`, navigation and at least one real download verified in Telegram.
+Gate: **PASSED 2026-10-24.** `/start`, `/help`, navigation, bad-link handling and real
+downloads verified live in Telegram (including the stuck-menu and duplicate-message bugs
+from the first test round, fixed and re-verified).
 
 ### Phase A — Inline keyboards + callbacks (after C is confirmed)
 
@@ -79,3 +84,10 @@ Gate: auth round-trip + one download completed from inside the Web App.
 - 2026-10-24: Order fixed as C → (confirm) → A → (confirm) → B.
 - 2026-10-24: PTB 21.11.1 → 22.8 (Bot API 10.0); code audit found zero
   breaking-change hits, so the upgrade was a pure dependency bump.
+- 2026-10-24: Phase C gate passed. Live testing caught three PTB 22 / Bot API
+  landmines the code audit couldn't: `Message.react()` doesn't exist (use
+  `Bot.set_message_reaction`), ✅/❌ aren't valid reaction emojis, and
+  `editMessageText` refuses reply keyboards (only inline ones are editable).
+  Also pre-existing latent bugs: `filters.TEXT` shadowed `/start` in every
+  substate, and yt-dlp resolves a bare domain URL to an empty "recommended"
+  playlist, which silently hung the progress message.
