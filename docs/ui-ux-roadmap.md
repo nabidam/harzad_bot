@@ -159,3 +159,29 @@ attachment` + CORS for `https://web.telegram.org` (Range-capable).
   (3) the SPA labelled assistant turns `role: "bot"`, which LangChain
   message tuples reject → server normalizes roles (`bot`→`assistant`,
   `user`→`human`).
+
+## Backlog — recorded 2026-10-26, explicitly deferred ("not now")
+
+1. **Stable tunnel domain / one-command deploy.** `localhost.run` re-issues
+   the URL mid-session (~20 min cadence); menu-button taps during the swap
+   window get a 502 until the watchdog re-syncs. Options: (a) localhost.run
+   free custom naming (account + API key → permanent domain, still free);
+   (b) a small `deploy.sh` that starts the watchdog (via `setsid`) and the
+   bot as one unit so the whole stack returns after a box reboot or an
+   OpenCode server restart — the restart on 2026-10-26 reaped even the
+   setsid-detached watchdog's process group, leaving bot + tunnel down.
+   The watchdog script itself lives outside the repo at
+   `/tmp/opencode/tunnel_watchdog.sh` (ephemeral path — copy into the repo
+   or a `scripts/` dir as part of this item).
+2. **Cleanup.** Remove the `/etc/hosts` pin
+   `104.16.10.132 api.trycloudflare.com` (leftover from the dead-end
+   cloudflared experiment), the unused `~/.local/bin/cloudflared` binary,
+   and the test DB container `harzad_test_pg` (`127.0.0.1:5437`) once it is
+   no longer needed. Do not touch the local Supabase stack.
+3. **Deferred Phase B improvements.**
+   - AI chat streaming via `send_message_draft` (Bot API 10.0) instead of
+     the current one-shot reply (the Mini App chat tab has no draft
+     streaming either; it polls one reply).
+   - Delete the dead reply-keyboard `before_*` modules and the old
+     reply-keyboard menu code (dead since Phase A). Needs explicit approval
+     before deletion.
