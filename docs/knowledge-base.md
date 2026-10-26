@@ -10,6 +10,15 @@ pillow 11.3, spotdl 4.6.0; `together`/`replicate` deps dropped; pytest +
 pytest-asyncio added to dev group. Verified (imports 37/37, behavior checks,
 live chat round-trip). §4/§9/§13 below reflect this where marked ✅.
 
+**Update 2026-10-26, round 2 (commit `f4d4586`):** majors applied — langchain
+0.3 → 1.4.6 / core 1.6.10 / openai-integration 1.7.2 (openai SDK 3.37),
+langchain-community dropped, instagrapi 2.1 → 3.2.1. **moviepy dropped**
+(hard pillow conflict with instagrapi 3.x; it was only ever used for reading
+video duration → now `mutagen`); pillow 13.0.0. Breakage found and fixed:
+only the resolver conflict + dead `LLMChain`/`PromptTemplate` imports.
+Live IG login blocked on empty `INSTAGRAM_USER`/`INSTAGRAM_PASSWORD` in `.env`
+(pre-existing gap — fails identically on 2.1.5).
+
 How to read: §1–§4 = what the code is, §5 = the box it runs on, §6 = per-feature flows,
 §7 = Bot API landmines already paid for, §8–§9 = secrets + dead code, §10 = open issues,
 §11 = test plan, §12 = workflow, §13 = dependency update plan (the actual next step).
@@ -142,8 +151,8 @@ Boot sequence (`main.py`):
 **YouTube video** (`bot/handlers/youtube/download.py`):
 `validators.url` gate → `YoutubeDL(YDL_OPTS)` (shared opts, §9-free) →
 `extract_info` (DownloadError → 👎+error msg) → playlist? loop entries : single →
-`ydl.download` + `process_info` → `prepare_filename` → moviepy `VideoFileClip` for
-duration → `<50 MB`: `send_video(supports_streaming, cover+thumbnail from
+`ydl.download` + `process_info` → `prepare_filename` → **mutagen for duration**
+(moviepy was only ever used for this and was dropped 2026-10-26 — see §13) → `<50 MB`: `send_video(supports_streaming, cover+thumbnail from
 prepare_cover, HTML caption w/ title, protect_content, state keyboard)` + 👍 :
 `≥50 MB`: text with `<code>link</code>` + `CopyTextButton("📋 Copy link", data=link)`
 (link = `prepare_link`: file path with `HOST_ROOT`→`HOSTNAME` substituted, spaces
@@ -281,18 +290,18 @@ says true). `WEBHOOK`/`WEBHOOK_OPTIONS` constants exist but are unused (polling 
 | alembic | `>=1.14,<2` | 1.20.1 | 1.20.1 | current |
 | spotdl | `>=4.2,<5` | 4.5.2 → **4.6.0** ✅ | 4.6.0 | minor; applied 2026-10-26; `utils/Spotidl.py` still imports cleanly on 4.6 internals |
 | validators | `>=0.34,<0.37` | 0.34.0 → **0.36.0** ✅ | 0.36.0 | un-pinned + bumped 2026-10-26; `validators.url` verified |
-| pillow | `>=10.4` | 10.4.0 → **11.3.0** ✅ | 13.0.0 | `<11` pin removed; resolver caps at 11.3 (moviepy/imageio constraints); prepare_cover + avatar path verified on 11.3 |
+| pillow | `>=10.4` | 10.4.0 → **13.0.0** ✅ | 13.0.0 | `<11` pin removed (round 1 → 11.3, moviepy-capped); moviepy dropped in round 2 → 13.0.0; prepare_cover + avatar path verified |
 | yt-dlp | `>=2024.12.23` | 2026.10.21 | **2026.10.21** | current |
-| moviepy | `>=2.1.1,<3` | 2.2.1 | 2.2.1 | current |
+| moviepy | `>=2.1.1,<3` | 2.2.1 → **dropped** ✅ | 2.2.1 | **hard conflict**: moviepy ≤2.2.1 needs pillow <12, instagrapi 3.x needs pillow ≥12.2. Only used to read video duration → replaced by `mutagen` (was already a transitive dep of spotdl) |
 | pydub | `==0.25.1` | 0.25.1 | 0.25.1 | frozen forever (stdlib `audioop` gone in 3.13) → **Python must stay 3.12** |
-| langchain | `>=0.3.14,<0.4` | 0.3.30 | **1.4.7** | MAJOR. Only dead imports in this repo (`LLMChain`, `PromptTemplate` in tti.py/tti_replicate.py); chat uses `langchain_openai` |
-| langchain-community | `>=0.3.14,<0.4` | 0.3.31 | 0.4.2 | MAJOR; imported by no module directly (transitive baggage) |
-| langchain-core | `>=0.3.29,<0.4` | 0.3.86 | 1.7.0 | MAJOR; pinned by langchain-openai 0.2.14's constraints |
-| langchain-openai | `>=0.2.14,<0.3` | 0.2.14 | **1.7.2** | MAJOR. `ChatOpenAI` API stable but kwarg renames happened (0.2→1.x: `openai_api_base`/`openai_api_key` → `base_url`/`api_key`; old names deprecated) |
+| langchain | `>=1,<2` | 0.3.30 → **1.4.6** ✅ | 1.4.7 | applied 2026-10-26 (round 2); dead `LLMChain`/`PromptTemplate` imports deleted first |
+| langchain-community | — (dropped ✅) | 0.3.31 → removed | 0.4.2 | imported by nothing in the repo |
+| langchain-core | `>=1,<2` | 0.3.86 → **1.6.10** ✅ | 1.7.0 | applied with the stack; pulls the langgraph 1.x chain |
+| langchain-openai | `>=1,<2` | 0.2.14 → **1.7.2** ✅ | 1.7.2 | legacy `ChatOpenAI(openai_api_base=, openai_api_key=)` kwargs **still accepted** without deprecation — `chat.py` unchanged; pulls openai SDK **3.37.0** |
 | psycopg2-binary | `>=2.9.9,<3` | 2.9.13 | 2.9.13 | current |
 | replicate | `>=0.23.1,<1` | 0.34.2 → **removed** ✅ | 1.0.7 | TTI disabled 2026-10-26; only the dead `tti_replicate.py` used it (now lazy-imports) |
 | together | `>=1.3,<2` | 1.3.14 → **removed** ✅ | 3.0.0 | TTI disabled 2026-10-26; `tti.py` now lazy-imports the SDK |
-| instagrapi | `>=2.1,<3` | 2.1.5 | **3.2.1** | MAJOR; IG feature. 3.x: pydantic-v2 only, `.dict()` likely gone (code mixes `.dict()`/`.model_dump()`), Client kwarg/exception changes possible |
+| instagrapi | `>=3,<4` | 2.1.5 → **3.2.1** ✅ | 3.2.1 | applied 2026-10-26 (round 2); import surface used by this repo (Client, delay_range, set_proxy, full exceptions list, `.model_dump()`/`.dict()`) intact on 3.2.1 + pydantic 2.12. Live login untestable: `INSTAGRAM_USER`/`INSTAGRAM_PASSWORD` empty in `.env`. 3.x login is the "Android CAA flow" with legacy fallback |
 | requests | `>=2.32` | 2.34.2 | 2.34.2 | current |
 | ffmpeg | `==1.4` | 1.4 | 1.4 | frozen (bundles ffmpeg binary for moviepy/pydub) |
 | aiohttp | `>=3.14.5` | 3.14.5 | 3.14.5 | current |
@@ -305,9 +314,12 @@ says true). `WEBHOOK`/`WEBHOOK_OPTIONS` constants exist but are unused (polling 
   — `spotdl._version`, `spotdl.console`, `spotdl.download.downloader`,
   `spotdl.types.*`, `spotdl.utils.*` — any internal rename breaks its import,
   though nothing imports it).
-- **langchain 0.3 stack**: langsmith, tiktoken, pydantic-settings, openai 1.109.1,
-  anyio 3.7.1 (old — pinned by langchain-core 0.3).
-- **moviepy 2.x** → imageio, imageio-ffmpeg, numpy, proglog, decorator.
+- **langchain 1.x stack**: langsmith, tiktoken, openai 3.37, langgraph 1.2 +
+  checkpoint/prebuilt/sdk, anyio 4.x (was 3.7), pydantic 2.12.5.
+- **instagrapi 3.x**: httpx2 2.16 (+ httpcore2, httpx2-jsfetch), truststore —
+  the 3.x client is a new "Android CAA flow" implementation.
+- **moviepy chain gone** (round 2): imageio, imageio-ffmpeg, numpy, proglog,
+  decorator all left the lock with it.
 - **ptb 22.8** → httpx, httpcore, certifi, typing-extensions.
 
 ### 4.3 Python
@@ -457,8 +469,11 @@ Arch Linux container. Networking is the central constraint:
    backlog #1.
 5. ~~TTI uses together.ai via a possibly-dead SDK path.~~ Resolved by disabling TTI
    (2026-10-26, commit `c398813`): feature off, deps dropped, re-enable later if wanted.
-6. Instagram session not yet established (`login/` empty) — first IG use triggers
-   login; untested this session.
+6. Instagram **credentials are empty in `.env`** (`INSTAGRAM_USER`/
+   `INSTAGRAM_PASSWORD`) — discovered 2026-10-26 while verifying the instagrapi
+   3.2 bump (login raises `BadCredentials` before any network call; identical
+   behavior on 2.1.5). No `login/` session exists either. The IG feature is
+   code-ready but untestable until the admin fills those in.
 7. Spotify download unverified this session (needs valid client creds + a track).
 8. No tests anywhere; no CI.
 
@@ -481,7 +496,7 @@ maybe `respx` (httpx mocking for PTB-level unit tests).
 | 9 | `connectors.db` + cruds | create/update/get user+log on `harzad_test_pg` (fresh schema or temp tables) | — |
 | 10 | `utils.decorators` | sync_user/log_message with real test DB; failure re-raise | — |
 | 11 | `youtube_dl.YDL_OPTS` | opts shape | real yt-dlp single video (proxy) |
-| 12 | chat handlers × 6 | handler-level with mocked bot (PTB `TestBot`/httpx mock) | live per-feature: YT video, YT mp3, Spotify, IG (session), Pinterest, AI chat (TTI disabled) |
+| 12 | chat handlers × 6 | handler-level with mocked bot (PTB `TestBot`/httpx mock) | live per-feature: YT video, YT mp3, Spotify, Pinterest, AI chat (TTI disabled); **IG blocked on empty `.env` creds** (open issue #6) |
 | 13 | `main.py` bootstrap | post_init order; menu-button only-when-URL logic | real boot (already routine) |
 | 14 | `utils.instagram`/`InstagramClient` | exception→LoginException mapping | IG login + one media (needs creds/session) |
 
@@ -511,14 +526,15 @@ of upgrading it; keep chat; apply the low-risk ones.**
    `Spotdl` construction with Spotify auth verified).
 5. ✅ **pillow 10.4 → 11.3** (resolver cap, not 13 — moviepy/imageio chain;
    `prepare_cover` + avatar resize verified).
-6. ⏸ **langchain stack 0.3 → 1.x** (deferred — major): requires deleting the dead
-   `LLMChain`/`PromptTemplate` imports in `tti.py`/`tti_replicate.py`; update
-   `chat.py` kwargs to 1.x names (`base_url`, `api_key`) if the old aliases warn;
-   `langchain-community` can likely drop entirely.
+6. ✅ **langchain stack 0.3 → 1.x** (commit `f4d4586`): dead
+   `LLMChain`/`PromptTemplate` imports deleted; legacy `ChatOpenAI` kwargs
+   verified still accepted (no deprecation) so `chat.py` unchanged;
+   `langchain-community` dropped; live vLLM round-trip green (direct +
+   production Mini App).
 7. ~~together 1.3 → 3.0~~ **superseded**: feature disabled, dep removed.
-8. ⏸ **instagrapi 2.1 → 3.x** (deferred — major): `.dict()` → `.model_dump()` (1
-   site), check `Client(request_timeout=)` + exception names + `delay_range`/
-   `set_proxy` against 3.x, then live-test one media with the admin session.
+8. ✅ **instagrapi 2.1 → 3.2.1** (commit `f4d4586`): import surface + client
+   construction verified; `.dict()`/`.model_dump()` intact on pydantic 2.12.
+   **Live login untested — `.env` creds empty** (open issue #6; not a regression).
 9. ~~replicate 0.34 → 1.0.7~~ **superseded**: dep removed (only the dead path used it).
 10. ✅ Final smoke for this batch: full boot + mini-app health + live anonymous
     AI chat round-trip over the public tunnel (all green 2026-10-26 10:33).
