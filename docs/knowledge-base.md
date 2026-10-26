@@ -4,6 +4,12 @@ Date: 2026-10-26. Full extraction of project knowledge, taken **before the depen
 update** so every module's behavior can be re-verified after. Source of truth is the
 code on `main` at this date (commit `5a9e44a`) plus live-verified runtime facts.
 
+**Update 2026-10-26 (commit `c398813`):** TTI image generation (together/replicate)
+disabled per user decision — chat kept. Low-risk bumps applied: validators 0.36,
+pillow 11.3, spotdl 4.6.0; `together`/`replicate` deps dropped; pytest +
+pytest-asyncio added to dev group. Verified (imports 37/37, behavior checks,
+live chat round-trip). §4/§9/§13 below reflect this where marked ✅.
+
 How to read: §1–§4 = what the code is, §5 = the box it runs on, §6 = per-feature flows,
 §7 = Bot API landmines already paid for, §8–§9 = secrets + dead code, §10 = open issues,
 §11 = test plan, §12 = workflow, §13 = dependency update plan (the actual next step).
@@ -24,7 +30,7 @@ Features (chat side, all via inline-keyboard navigation):
 | Pinterest | `https://pin.it/…` videos → mp4 | `yt-dlp` |
 | YouTube | video → mp4 (≤720p, streaming, cover) or audio → mp3 192k; playlists loop; >50 MB → link + Copy button | `yt-dlp` |
 | AI / Chat | free-form chat | local vLLM (`gemma4`) via `langchain_openai.ChatOpenAI` |
-| AI / TTI | text→image 512×512 | together.ai SDXL (key in `.env`) |
+| AI / TTI | ~~text→image 512×512~~ | **DISABLED 2026-10-26** (together.ai SDXL; button removed, handlers kept with lazy SDK imports) |
 
 Mini App (Phase B, shipped 2026-10-24): single-page app behind the chat menu button —
 **Download tab** (same yt-dlp pipeline + `tg.downloadFile` "Save to device") and
@@ -110,7 +116,9 @@ Boot sequence (`main.py`):
 
 - 12 integer states (`utils/constants/states.py`): START, INSTAGRAM, INSTAGRAM_DOWNLOAD,
   MUSIC, MUSIC_SPOTIFY, PINTEREST, YOUTUBE, YOUTUBE_DOWNLOAD, YOUTUBE_MP3, AI, AI_CHAT,
-  AI_TTI = range(12).
+  AI_TTI = range(12). The conversation wires **11** — `AI_TTI_STATE` still exists in
+  `states.py` (imported by the dormant `tti.py`) but has no handlers since TTI was
+  disabled on 2026-10-26.
 - Entry: `/start` (also re-allowed in every state via `shared_handlers`, so the user
   can never get stranded).
 - `navigate()` (`bot/navigation.py`): one `CallbackQueryHandler` first in every state.
@@ -173,11 +181,14 @@ openai_api_base=LLM_BASE_URL, openai_api_key=LLM_API_KEY)` + `SYSTEM_PROMPT`
 HTML reply. **These two module globals are also imported by `web/app.py:handle_chat`**
 (keep the names stable).
 
-**TTI** (`ai/tti.py`): `together.Image.create(prompt, model="stabilityai/
+**TTI** (`ai/tti.py`) — **DISABLED 2026-10-26** (button removed from the AI menu,
+state removed from the conversation; `import together` + `together.api_key` moved
+inside the handler so the module imports without the SDK, which is no longer
+installed). If re-enabled: `together.Image.create(prompt, model="stabilityai/
 stable-diffusion-xl-base-1.0", 512×512, steps=40, seed=6616)` → b64decode →
-`send_image`. Blocking SDK call (not in executor). Dead imports: `LLMChain`,
+`send_image`; blocking SDK call (not in executor). Dead imports: `LLMChain`,
 `PromptTemplate`, `ChatOpenAI` (unused). `ai/tti_replicate.py` = unused alternative
-(replicate SDK, same dead imports).
+(replicate SDK, lazy import, SDK not installed).
 
 ### 3.4 Mini App (`web/app.py`, 380 lines)
 
@@ -268,9 +279,9 @@ says true). `WEBHOOK`/`WEBHOOK_OPTIONS` constants exist but are unused (polling 
 | python-dotenv | `>=1.0,<2` | 1.2.4 | 1.2.4 | current |
 | sqlalchemy | `>=2.0,<3` | 2.1.6 | 2.1.6 | current |
 | alembic | `>=1.14,<2` | 1.20.1 | 1.20.1 | current |
-| spotdl | `>=4.2,<5` | 4.5.2 | **4.6.0** | minor; internals `utils/Spotidl.py` imports may shift (module is dead) |
-| validators | `>=0.34,<0.35` | 0.34.0 | **0.36.0** | pin blocks; API used: `validators.url` (stable) |
-| pillow | `>=10.4,<11` | 10.4.0 | **13.0.0** | pin `<11` blocks; API used: open/convert/resize/thumbnail/save (stable across 10→13, but 11+ removed some legacy constants — `Image.LANCZOS` still fine as alias) |
+| spotdl | `>=4.2,<5` | 4.5.2 → **4.6.0** ✅ | 4.6.0 | minor; applied 2026-10-26; `utils/Spotidl.py` still imports cleanly on 4.6 internals |
+| validators | `>=0.34,<0.37` | 0.34.0 → **0.36.0** ✅ | 0.36.0 | un-pinned + bumped 2026-10-26; `validators.url` verified |
+| pillow | `>=10.4` | 10.4.0 → **11.3.0** ✅ | 13.0.0 | `<11` pin removed; resolver caps at 11.3 (moviepy/imageio constraints); prepare_cover + avatar path verified on 11.3 |
 | yt-dlp | `>=2024.12.23` | 2026.10.21 | **2026.10.21** | current |
 | moviepy | `>=2.1.1,<3` | 2.2.1 | 2.2.1 | current |
 | pydub | `==0.25.1` | 0.25.1 | 0.25.1 | frozen forever (stdlib `audioop` gone in 3.13) → **Python must stay 3.12** |
@@ -279,8 +290,8 @@ says true). `WEBHOOK`/`WEBHOOK_OPTIONS` constants exist but are unused (polling 
 | langchain-core | `>=0.3.29,<0.4` | 0.3.86 | 1.7.0 | MAJOR; pinned by langchain-openai 0.2.14's constraints |
 | langchain-openai | `>=0.2.14,<0.3` | 0.2.14 | **1.7.2** | MAJOR. `ChatOpenAI` API stable but kwarg renames happened (0.2→1.x: `openai_api_base`/`openai_api_key` → `base_url`/`api_key`; old names deprecated) |
 | psycopg2-binary | `>=2.9.9,<3` | 2.9.13 | 2.9.13 | current |
-| replicate | `>=0.23.1,<1` | 0.34.2 | **1.0.7** | MAJOR; used only by dead `tti_replicate.py` |
-| together | `>=1.3,<2` | 1.3.14 | **3.0.0** | MAJOR; TTI feature (`together.Image.create` shape may differ) |
+| replicate | `>=0.23.1,<1` | 0.34.2 → **removed** ✅ | 1.0.7 | TTI disabled 2026-10-26; only the dead `tti_replicate.py` used it (now lazy-imports) |
+| together | `>=1.3,<2` | 1.3.14 → **removed** ✅ | 3.0.0 | TTI disabled 2026-10-26; `tti.py` now lazy-imports the SDK |
 | instagrapi | `>=2.1,<3` | 2.1.5 | **3.2.1** | MAJOR; IG feature. 3.x: pydantic-v2 only, `.dict()` likely gone (code mixes `.dict()`/`.model_dump()`), Client kwarg/exception changes possible |
 | requests | `>=2.32` | 2.34.2 | 2.34.2 | current |
 | ffmpeg | `==1.4` | 1.4 | 1.4 | frozen (bundles ffmpeg binary for moviepy/pydub) |
@@ -307,8 +318,8 @@ host pyenv also has 3.13.7 (used by the tunnel helper only). uv 0.5.9.
 
 ### 4.4 Dev group
 
-pylint, black, isort, bandit, autopep8 — no test tooling at all (no pytest, no
-conftest, zero test files). `pytest` latest = 9.1.1 (2026-10-26).
+pylint, black, isort, bandit, autopep8, plus **pytest 9.1.1 + pytest-asyncio 1.4.1
+(added 2026-10-26)** for the test phase. No test files exist yet (§11 is the plan).
 
 ## 5. Runtime environment (the box)
 
@@ -418,8 +429,8 @@ Arch Linux container. Networking is the central constraint:
 | `utils/Spotidl.py` | dead; imports spotdl internals — breaks first on any spotdl internal rename |
 | `connectors/sqlite.py` | dead (not imported; `SQLITE` env var exists only for it) |
 | `connectors/spotdl.py:create_spotdl_instance` | imported in main.py, never called |
-| `ai/tti.py`, `ai/tti_replicate.py` | dead imports (`LLMChain`, `PromptTemplate`, `ChatOpenAI`) — block langchain 1.x bump |
-| `ai/tti_replicate.py` | entirely unused handler (replicate path) |
+| `ai/tti.py`, `ai/tti_replicate.py` | **feature disabled 2026-10-26** (lazy SDK imports, UI wiring removed); still carry dead `LLMChain`/`PromptTemplate` imports — blocks a future langchain 1.x bump |
+| `ai/tti_replicate.py` | entirely unused handler (replicate path, SDK no longer installed) |
 | `utils/custom_context.py` MyContext | wired nowhere (`.context_types()` commented in main) |
 | `utils/decorators.py:restricted` | unused (ADMINS env exists for it) |
 | `settings.py`: `WEBHOOK*`, `SQLITE` consumers, `HF_TOKEN` consumer | unused |
@@ -444,8 +455,8 @@ Arch Linux container. Networking is the central constraint:
    phone tap; workaround = fresh URL message in chat. Stable domain = backlog #1.
 4. Watchdog + ncx live in `/tmp` (wiped on server restart) → rebuild by hand =
    backlog #1.
-5. TTI uses together.ai via a possibly-dead SDK path (together 1.3.14 vs 3.0 latest);
-   unverified since the AI chat switch.
+5. ~~TTI uses together.ai via a possibly-dead SDK path.~~ Resolved by disabling TTI
+   (2026-10-26, commit `c398813`): feature off, deps dropped, re-enable later if wanted.
 6. Instagram session not yet established (`login/` empty) — first IG use triggers
    login; untested this session.
 7. Spotify download unverified this session (needs valid client creds + a track).
@@ -470,7 +481,7 @@ maybe `respx` (httpx mocking for PTB-level unit tests).
 | 9 | `connectors.db` + cruds | create/update/get user+log on `harzad_test_pg` (fresh schema or temp tables) | — |
 | 10 | `utils.decorators` | sync_user/log_message with real test DB; failure re-raise | — |
 | 11 | `youtube_dl.YDL_OPTS` | opts shape | real yt-dlp single video (proxy) |
-| 12 | chat handlers × 6 | handler-level with mocked bot (PTB `TestBot`/httpx mock) | live per-feature: YT video, YT mp3, Spotify, IG (session), Pinterest, AI chat, TTI |
+| 12 | chat handlers × 6 | handler-level with mocked bot (PTB `TestBot`/httpx mock) | live per-feature: YT video, YT mp3, Spotify, IG (session), Pinterest, AI chat (TTI disabled) |
 | 13 | `main.py` bootstrap | post_init order; menu-button only-when-URL logic | real boot (already routine) |
 | 14 | `utils.instagram`/`InstagramClient` | exception→LoginException mapping | IG login + one media (needs creds/session) |
 
@@ -485,34 +496,36 @@ maybe `respx` (httpx mocking for PTB-level unit tests).
 - Commits: normal prose (caveman mode is conversation-only).
 - `uv` project: `package = false` (app repo, deps only).
 
-## 13. Dependency update plan (proposed — awaiting go-ahead)
+## 13. Dependency update plan (status as of 2026-10-26)
 
 Ordered lowest-risk first; after each step: `uv lock` + import smoke + the matching
-test from §11.
+test from §11. **User decision 2026-10-26: disable TTI (together/replicate) instead
+of upgrading it; keep chat; apply the low-risk ones.**
 
-1. **Dev group**: add `pytest`, `pytest-asyncio` (test tooling; zero app impact).
-2. **Bumps that are already at latest / no-op**: PTB, dotenv, sqlalchemy, alembic,
-   yt-dlp, moviepy, psycopg2, requests, aiohttp, ffmpeg, pydub — verify lock only.
-3. **validators 0.34 → 0.36** (un-pin `<0.35`): one API in use (`validators.url`).
-4. **spotdl 4.5.2 → 4.6.0**: minor; re-import `utils/Spotidl.py` (dead but importable
-   should stay importable) — or delete it (needs approval, backlog-adjacent).
-5. **pillow 10.4 → 11/12/13**: un-pin `<11`; exercise `prepare_cover` + avatar resize.
-6. **langchain stack 0.3 → 1.x**: requires deleting the dead
-   `LLMChain`/`PromptTemplate`/`ChatOpenAI`-unused imports in `tti.py` /
-   `tti_replicate.py` first; update `chat.py` kwargs to 1.x names
-   (`base_url`, `api_key`) if the old aliases warn; `langchain-community` can likely
-   drop entirely (nothing imports it directly). Verify chat still answers.
-7. **together 1.3 → 3.0**: verify `together.Image.create` response shape against live
-   key (TTI feature). If 3.0 changed the API, either adapt or pin 1.3 and note it.
-8. **instagrapi 2.1 → 3.x**: biggest feature risk. Migrate `.dict()` →
-   `.model_dump()` (1 site), check `Client(request_timeout=)` + exception names +
-   `delay_range`/`set_proxy` against 3.x, then live-test one media with the admin
-   session. If 3.x login flow breaks, pin 2.1.5 and note it.
-9. **replicate 0.34 → 1.0.7**: only the dead path imports it — delete
-   `tti_replicate.py` (needs approval) or bump + import-check.
-10. Final: full boot + mini-app smoke (health, auth, one chat, one download) and
-    §11 live pass.
+1. ✅ **Dev group**: added `pytest` 9.1.1, `pytest-asyncio` 1.4.1 (commit `c398813`).
+2. ✅ **Already-latest no-ops**: PTB 22.8, dotenv 1.2.4, sqlalchemy 2.1.6, alembic
+   1.20.1, yt-dlp 2026.10.21, moviepy 2.2.1, psycopg2 2.9.13, requests 2.34.2,
+   aiohttp 3.14.5, ffmpeg 1.4, pydub 0.25.1 — lock verified.
+3. ✅ **validators 0.34 → 0.36** (commit `c398813`; `validators.url` verified).
+4. ✅ **spotdl 4.5.2 → 4.6.0** (commit `c398813`; `utils/Spotidl.py` internals +
+   `Spotdl` construction with Spotify auth verified).
+5. ✅ **pillow 10.4 → 11.3** (resolver cap, not 13 — moviepy/imageio chain;
+   `prepare_cover` + avatar resize verified).
+6. ⏸ **langchain stack 0.3 → 1.x** (deferred — major): requires deleting the dead
+   `LLMChain`/`PromptTemplate` imports in `tti.py`/`tti_replicate.py`; update
+   `chat.py` kwargs to 1.x names (`base_url`, `api_key`) if the old aliases warn;
+   `langchain-community` can likely drop entirely.
+7. ~~together 1.3 → 3.0~~ **superseded**: feature disabled, dep removed.
+8. ⏸ **instagrapi 2.1 → 3.x** (deferred — major): `.dict()` → `.model_dump()` (1
+   site), check `Client(request_timeout=)` + exception names + `delay_range`/
+   `set_proxy` against 3.x, then live-test one media with the admin session.
+9. ~~replicate 0.34 → 1.0.7~~ **superseded**: dep removed (only the dead path used it).
+10. ✅ Final smoke for this batch: full boot + mini-app health + live anonymous
+    AI chat round-trip over the public tunnel (all green 2026-10-26 10:33).
 
 Standing constraints: Python stays 3.12 (pydub/audioop); `ffmpeg==1.4` stays pinned;
 vLLM is loopback-only and never behind the proxy; `YT_PROXY` stays
-`http://127.0.0.1:10808`.
+`http://127.0.0.1:10808`. Practical note: `uv sync` wheel downloads time out on the
+box's direct egress — use `HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:10808
+UV_HTTP_TIMEOUT=180`; and a widened pin does not move a locked version on its own —
+force with `uv lock --upgrade-package <name>`.
