@@ -23,7 +23,10 @@ def get_user_client_instagram():
         )
         return client
     except LoginException:
-        os.remove(user_instagram_session_path)
+        # Guard: on first-ever use no session file exists yet, and a
+        # login failure must degrade to "no client" (None), not crash.
+        if os.path.exists(user_instagram_session_path):
+            os.remove(user_instagram_session_path)
         pass
 
     try:

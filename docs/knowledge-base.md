@@ -331,7 +331,8 @@ host pyenv also has 3.13.7 (used by the tunnel helper only). uv 0.5.9.
 ### 4.4 Dev group
 
 pylint, black, isort, bandit, autopep8, plus **pytest 9.1.1 + pytest-asyncio 1.4.1
-(added 2026-10-26)** for the test phase. No test files exist yet (§11 is the plan).
+(added 2026-10-26)** for the test phase. `tests/` exists and is green (183 tests,
+`addopts = -m 'not live'`; live set runs with `pytest -m live`) — see §11 status.
 
 ## 5. Runtime environment (the box)
 
@@ -441,10 +442,10 @@ Arch Linux container. Networking is the central constraint:
 | `utils/Spotidl.py` | dead; imports spotdl internals — breaks first on any spotdl internal rename |
 | `connectors/sqlite.py` | dead (not imported; `SQLITE` env var exists only for it) |
 | `connectors/spotdl.py:create_spotdl_instance` | imported in main.py, never called |
-| `ai/tti.py`, `ai/tti_replicate.py` | **feature disabled 2026-10-26** (lazy SDK imports, UI wiring removed); still carry dead `LLMChain`/`PromptTemplate` imports — blocks a future langchain 1.x bump |
+| `ai/tti.py`, `ai/tti_replicate.py` | **feature disabled 2026-10-26** (lazy SDK imports, UI wiring removed); dead langchain imports removed in the majors round |
 | `ai/tti_replicate.py` | entirely unused handler (replicate path, SDK no longer installed) |
 | `utils/custom_context.py` MyContext | wired nowhere (`.context_types()` commented in main) |
-| `utils/decorators.py:restricted` | unused (ADMINS env exists for it) |
+| `utils/decorators.py:restricted` | unused; **int/str ADMINS bug fixed 2026-10-26** (would have denied everyone, incl. admins) |
 | `settings.py`: `WEBHOOK*`, `SQLITE` consumers, `HF_TOKEN` consumer | unused |
 | `main.py`: `PicklePersistence`, `signal`, `sys`, `import_module` imports; commented `SpotifyClient.init` block | dead |
 | `messages.py` lines 1–150 (rzashakeri seed texts) | mostly unused templates (lottery/insights/upload/feedback — features that don't exist) |
@@ -474,8 +475,28 @@ Arch Linux container. Networking is the central constraint:
    3.2 bump (login raises `BadCredentials` before any network call; identical
    behavior on 2.1.5). No `login/` session exists either. The IG feature is
    code-ready but untestable until the admin fills those in.
-7. Spotify download unverified this session (needs valid client creds + a track).
-8. No tests anywhere; no CI.
+7. ~~Spotify download unverified~~ **Resolved 2026-10-26**: live spotdl 4.6.0
+   search + download verified (`tests/test_15_live_features.py`, ~4 min run).
+8. ~~No tests anywhere; no CI.~~ **Resolved 2026-10-26**: `tests/` — 183
+   unit/integration tests + 4 live tests; CI still none.
+9. **Pinterest live test needs a real pin URL** — Pinterest serves no
+   server-rendered pin ids to plain scrapers (ideas/profile pages are JS
+   shells; search engines + Reddit blocked via the box proxy). Live test
+   skips unless `PINTEREST_TEST_PIN` is set. Mechanism is covered by the
+   shared yt-dlp engine (verified live on YouTube) + handler-branch unit tests.
+10. **`next_proxy` is broken**: `.env` `PROXY_LIST=None` (the literal
+   string), so `random.choices()` returns a single character. Only the IG
+   rate-limit recovery path uses it — harmless until IG creds exist.
+11. **`get_client` double login**: the no-session path calls `client.login()`
+   twice (dump, then validate). Pinned in `tests/test_14` on purpose; review
+   whether the second call is needed once IG is live.
+12. **`prepare_link` double slash**: `HOSTNAME` carries a trailing slash →
+   `http://localhost//videos/...`. Only matters if the >50 MB fallback link
+   is ever fixed (issue #2).
+13. **YDL_OPTS outtmpl concatenation**: `DOWNLOAD_VIDEO_PATH` has no trailing
+   slash, so files land as `downloads/videos<Title>.mp4` (flat in
+   `downloads/`, not in a `videos/` subdirectory). Both flows (chat + mini
+   app) rely on it being consistent — it is (shared `YDL_OPTS`).
 
 ## 11. Test plan (for the "one by one" phase)
 
@@ -500,9 +521,34 @@ maybe `respx` (httpx mocking for PTB-level unit tests).
 | 13 | `main.py` bootstrap | post_init order; menu-button only-when-URL logic | real boot (already routine) |
 | 14 | `utils.instagram`/`InstagramClient` | exception→LoginException mapping | IG login + one media (needs creds/session) |
 
+**Status 2026-10-26 — executed, all modules green.**
+
+- 183 unit/integration tests: `tests/test_01_settings.py` …
+  `tests/test_14_instagram.py` + `tests/conftest.py`. Env matrix runs in a
+  scratch package copy (load_dotenv resolves `.env` from the importing
+  module, not cwd). Mini app via `aiohttp.test_utils.TestClient` with a
+  stubbed `_ytdlp_run`. DB tests hit `harzad_test_pg` with unique 32-bit
+  tg_ids, cleaned up in teardown. Handler tests use a fake `YoutubeDL` +
+  ffmpeg-generated fixtures (`tests/fixtures/small.mp4|.mp3`). `respx` was
+  never needed (mocking at module boundaries).
+- Live (`pytest -m live`): YT video ✅ (mp4 ≤720p + webp thumb, mutagen
+  duration, `prepare_cover` → JPEG ≤190 KB), YT mp3 ✅
+  (FFmpegExtractAudio via `/usr/bin/ffmpeg`), Spotify ✅ (real search +
+  download, "concerto for rain"), AI chat ✅ (production mini app against
+  vLLM), Pinterest ⏸ (open issue #9), IG ⏸ (open issue #6 — left open by
+  user request).
+- Bugs found by the suite and **fixed**: `escape_md` incomplete MDv2
+  escaping (`re.escape` special-set drifted in Python 3.7+; `>`, `=`, `!`
+  and backticks went unescaped → Telegram parse errors on such text);
+  `restricted` comparing int user id against string ADMINS;
+  `utils/instagram.py` crashing with `FileNotFoundError` on first-ever
+  login failure (`os.remove` of a session file that does not exist — now
+  guarded); `BadCredentials` (what instagrapi 3.x raises for empty/invalid
+  creds) added to the `LoginException` mapping in `utils/InstagramClient.py`.
+
 ## 12. Git & workflow
 
-- `main` (pushed) = `5a9e44a` (backlog docs). Phase merges: C `162e2d1`/`98ad365`,
+- `main` (pushed) = `ae7af69` (KB majors round); test phase landed 2026-10-26. Phase merges: C `162e2d1`/`98ad365`,
   A `cd2b35f`, B `f5d1ffb`. Stale local branches: `mini-app`, `inline-keyboards`,
   `ux-polish`, `uv-migration` (all merged); remote extras: `clean`, `develop`.
 - Phase workflow (user-fixed): implement on branch → **live gate** → user confirms →

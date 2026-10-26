@@ -8,7 +8,6 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ExtBot
 
-import re
 from PIL import Image
 from configurations.settings import HOST_ROOT, HOSTNAME, PROXY_LIST
 
@@ -52,8 +51,14 @@ async def react_message(update, bot: ExtBot, emoji: str):
         logging.warning(f"Could not set reaction {emoji!r}: {err}")
 
 def escape_md(text):
-    escape_chars = r"\_*[]()~>#+-=|{}.!"
-    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
+    # The full Markdown-V2 special set, escaped explicitly: re.escape()
+    # only escapes regex-special characters and its set changed across
+    # Python versions (3.7 dropped `_`, `!`, `>`, ...), which silently
+    # produced unescaped MDv2 specials -> Telegram parse errors.
+    mdv2_specials = set(r"\_*[]()~`>#+-=|{}.!")
+    return "".join(
+        "\\" + ch if ch in mdv2_specials else ch for ch in str(text)
+    )
 
 def escape_html(text):
     """Escape user-provided text so it is safe inside an HTML parse-mode message."""

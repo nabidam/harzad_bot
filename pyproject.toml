@@ -1,3 +1,15 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "live: tests that hit real external services (network) — excluded from the default run",
+]
+filterwarnings = [
+    "ignore::aiohttp.web_app.NotAppKeyWarning",
+]
+
 [project]
 name = "harzad-bot"
 version = "0.1.0"

@@ -13,7 +13,9 @@ def restricted(func):
     @wraps(func)
     async def wrapped(update, context, *args, **kwargs):
         user_id = update.effective_user.id
-        if user_id not in ADMINS:
+        # ADMINS entries are strings (split(',') of an env var); compare
+        # as strings, or the check denies every user including admins.
+        if str(user_id) not in {a.strip() for a in ADMINS}:
             print(f"Unauthorized access denied for {user_id}.")
             return
         return await func(update, context, *args, **kwargs)

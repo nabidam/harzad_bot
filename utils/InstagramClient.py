@@ -3,6 +3,7 @@ from logging import getLogger
 from pathlib import Path
 
 from instagrapi import Client
+from instagrapi.exceptions import BadCredentials
 from instagrapi.exceptions import BadPassword
 from instagrapi.exceptions import ChallengeError
 from instagrapi.exceptions import ChallengeRequired
@@ -108,8 +109,10 @@ def handle_exception(client, error) -> None:
             except AttributeError:
                 pass
 
-        if isinstance(error, BadPassword):
-            logger.info("raises 'BadPassword' error")
+        # BadCredentials is what instagrapi 3.x raises for missing/invalid
+        # credentials (e.g. empty login) — same family as BadPassword.
+        if isinstance(error, (BadPassword, BadCredentials)):
+            logger.info("raises 'BadPassword/BadCredentials' error")
             logger.info(error)
             raise LoginException({"status": "fail", "message": error})
         elif isinstance(error, RateLimitError):
