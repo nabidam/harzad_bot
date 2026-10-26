@@ -71,10 +71,7 @@ youtube_mp3_state_keyboard_rm = InlineKeyboardMarkup([
 ])
 
 ai_state_keyboard_rm = InlineKeyboardMarkup([
-    [
-        _action(AI_CHAT_KEYBOARD, CB_AI_CHAT),
-        _action(AI_TTI_KEYBOARD, CB_AI_TTI),
-    ],
+    [_action(AI_CHAT_KEYBOARD, CB_AI_CHAT)],
     _back_home(CB_START),
 ])
 

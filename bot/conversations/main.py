@@ -10,7 +10,7 @@ from bot.handlers.instagram import download
 from bot.handlers.music.spotify import download as spotify_download
 from bot.handlers.pinterest import download as pinterest_download
 from bot.handlers.youtube import download as youtube_download, mp3 as youtube_mp3
-from bot.handlers.ai import chat, tti
+from bot.handlers.ai import chat
 from bot.navigation import navigate
 from utils import shared_handlers
 from utils.constants.states import (
@@ -25,7 +25,6 @@ from utils.constants.states import (
     YOUTUBE_MP3_STATE,
     AI_STATE,
     AI_CHAT_STATE,
-    AI_TTI_STATE,
 )
 
 
@@ -90,11 +89,6 @@ def main_conversation_handler():
                 CallbackQueryHandler(navigate),
                 *shared_handlers.shared_handlers,
                 MessageHandler(filters.TEXT, chat.handler),
-            ],
-            AI_TTI_STATE: [
-                CallbackQueryHandler(navigate),
-                *shared_handlers.shared_handlers,
-                MessageHandler(filters.TEXT, tti.handler),
             ],
         },
         fallbacks=[],

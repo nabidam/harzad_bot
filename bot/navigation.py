@@ -25,11 +25,9 @@ from utils.constants.keyboards import (
     CB_YOUTUBE_MP3,
     CB_AI,
     CB_AI_CHAT,
-    CB_AI_TTI,
 )
 from utils.constants.messages import (
     AI_CHAT_INSTRUCTION,
-    AI_TTI_INSTRUCTION,
     CHOOSE_MESSAGE,
     HELLO,
     INSTAGRAM_INSTRUCTION,
@@ -49,7 +47,6 @@ from utils.constants.states import (
     YOUTUBE_MP3_STATE,
     AI_STATE,
     AI_CHAT_STATE,
-    AI_TTI_STATE,
 )
 from utils.helpers import escape_html, send_html_msg, stringify_none_str
 
@@ -69,7 +66,6 @@ NAVIGATOR = {
     CB_YOUTUBE_MP3: (YOUTUBE_INSTRUCTION, keyboards.youtube_mp3_state_keyboard_rm, YOUTUBE_MP3_STATE),
     CB_AI: (CHOOSE_MESSAGE, keyboards.ai_state_keyboard_rm, AI_STATE),
     CB_AI_CHAT: (AI_CHAT_INSTRUCTION, keyboards.ai_chat_state_keyboard_rm, AI_CHAT_STATE),
-    CB_AI_TTI: (AI_TTI_INSTRUCTION, keyboards.ai_tti_state_keyboard_rm, AI_TTI_STATE),
 }
 
 

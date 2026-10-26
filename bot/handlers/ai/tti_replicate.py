@@ -5,7 +5,6 @@ from langchain.prompts import PromptTemplate
 import validators
 import re
 from logging import getLogger
-import replicate
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -39,6 +38,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     bot_message = await context.bot.send_message(chat_id=update.message.chat_id, text=PROCESSING)
     
+    # Feature disabled (2026-10-26): the replicate SDK is not installed by
+    # default, so import it here rather than at module level.
+    import replicate
+
     replicate_response = replicate.run(repo_id,input={"prompt": message})
     
     print(replicate_response)

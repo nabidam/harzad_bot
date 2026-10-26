@@ -5,7 +5,6 @@ from langchain.prompts import PromptTemplate
 import validators
 import re
 from logging import getLogger
-import together
 import base64
 
 from telegram import Update
@@ -22,8 +21,6 @@ from utils import keyboards
 
 # Init logger
 logger = getLogger(__name__)
-
-together.api_key = TOGETHER_API_KEY
 
 model = "stabilityai/stable-diffusion-xl-base-1.0"
 # model = "prompthero/openjourney"
@@ -47,6 +44,11 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     bot_message = await context.bot.send_message(chat_id=update.message.chat_id, text=PROCESSING)
     
+    # Feature disabled (2026-10-26): the together SDK is not installed by
+    # default, so import it here rather than at module level.
+    import together
+
+    together.api_key = TOGETHER_API_KEY
     together_response = together.Image.create(
         prompt = message, 
         model = model, 
