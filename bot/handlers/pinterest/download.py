@@ -22,8 +22,8 @@ from instagrapi.exceptions import UserNotFound
 
 from utils.instagram import get_user_client_instagram
 
+from mutagen import File as MutagenFile
 from yt_dlp import YoutubeDL, utils
-import moviepy as mp
 
 # Init logger
 logger = getLogger(__name__)
@@ -98,9 +98,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ext = info_dict.get('ext')
                 filename = ydl.prepare_filename(info_dict)
                 thumbnail_url = info_dict.get("thumbnail")
+                # duration via mutagen (moviepy was only ever used for this)
+                duration = int(MutagenFile(filename).info.length)
                 with open(filename, "rb") as f:
-                    video = mp.VideoFileClip(filename)
-                    duration = video.duration
 
                     # check for video size
 

@@ -19,8 +19,8 @@ from utils import keyboards
 from utils.instagram import get_user_client_instagram
 from utils.youtube_dl import YDL_OPTS
 
+from mutagen import File as MutagenFile
 from yt_dlp import YoutubeDL, utils
-import moviepy as mp
 
 # Init logger
 logger = getLogger(__name__)
@@ -99,9 +99,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ext = item.get('ext')
                         filename = ydl.prepare_filename(item)
                         thumbnail_url = item.get("thumbnail")
+                        # duration via mutagen (moviepy was only ever used for this)
+                        duration = int(MutagenFile(filename).info.length)
                         with open(filename, "rb") as f:
-                            video = mp.VideoFileClip(filename)
-                            duration = video.duration
                             
                             # check for size
                             # Get the file size in bytes
@@ -157,9 +157,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ext = info_dict.get('ext')
                     filename = ydl.prepare_filename(info_dict)
                     thumbnail_url = info_dict.get("thumbnail")
+                    # duration via mutagen (moviepy was only ever used for this)
+                    duration = int(MutagenFile(filename).info.length)
                     with open(filename, "rb") as f:
-                        video = mp.VideoFileClip(filename)
-                        duration = video.duration
 
                         # check for video size
                         # Get the file size in bytes

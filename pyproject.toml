@@ -14,16 +14,14 @@ dependencies = [
     "validators>=0.34,<0.37",
     "pillow>=10.4",
     "yt-dlp>=2024.12.23",
-    "moviepy>=2.1.1,<3",
     "pydub==0.25.1",
-    "langchain>=0.3.14,<0.4",
-    "langchain-community>=0.3.14,<0.4",
-    "langchain-core>=0.3.29,<0.4",
-    "langchain-openai>=0.2.14,<0.3",
+    "langchain>=1,<2",
+    "langchain-core>=1,<2",
+    "langchain-openai>=1,<2",
     "psycopg2-binary>=2.9.9,<3",
-    "instagrapi>=2.1,<3",
+    "instagrapi>=3,<4",
     "requests>=2.32",
-    # Bundles the ffmpeg binary, needed at runtime by moviepy/pydub
+    # Bundles the ffmpeg binary, needed at runtime by pydub (mp3 postprocessing)
     "ffmpeg==1.4",
     "aiohttp>=3.14.5",
 ]
