@@ -1,76 +1,91 @@
-"""Spotify text search & interactive track cards (plan 1.2).
+"""Spotify text search & the single editable result card (redesign §5).
 
-Plain text in the music states is treated as a query: the top matches
-from the same Spotify backend spotdl uses at boot are rendered as photo
-cards with [⬇️ Download MP3] / [🎧 30s Preview] / [📄 Lyrics] /
-[🔗 Open on Spotify] buttons. The rendered candidates are stashed in
-user_data["song_candidates"] so the callback buttons can resolve them —
-callback_data can only carry the card index. Previews come from the
-iTunes/Deezer fallback (plan 1.4); lyrics land in Phase 2.4.
+Plain text in the Search Music input mode is a song query. The top
+matches from the same Spotify backend spotdl uses at boot are shown as
+ONE result card — a small in-chat carousel that edits the same message's
+photo/caption and keyboard for previous/next matches (spec §5.3). Never
+three separate photo messages.
+
+State lives in a shared token map (bot_data, 300 s TTL): the token names
+the exact result set, so any user who can see the card can tap it, and a
+stale token gets a toast — never "the most recent results for this user"
+(spec §5.3, §5.6, §16). The pre-token rollout rendered index-only
+payloads; those buttons are unresolvable by design and only ever answer
+the stale toast.
 """
 import asyncio
 import re
 import uuid
 from logging import getLogger
 
-from telegram import Update
+from telegram import InputMediaPhoto, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 
 from connectors.preview import resolve_preview_url
 from connectors.spotify_search import TrackResult, format_duration, search_tracks
-from utils import keyboards, progress
+from utils import copy, keyboards, progress
 from utils.constants.keyboards import (
     SONG_ACTION_CALLBACK_PATTERN,
+    SONG_ACTION_LEGACY_PATTERN,
+    SEARCH_AGAIN_CALLBACK_PATTERN,
     SEARCH_CANCEL_CALLBACK_PATTERN,
 )
-from utils.constants.messages import (
-    COMMING_SOON,
-    NO_PREVIEW,
-    NO_RESULTS_FOUND,
-    SEARCH_CANCELLED,
-    SEARCH_FAILED,
-    SEARCHING,
-    SEARCHING_TICK,
-    SONG_EXPIRED,
-    STALE_SEARCH_CANCEL,
-    TRACK_CARD,
-)
-from utils.constants.states import MUSIC_STATE
+from utils.constants.messages import SEARCHING, SEARCHING_TICK
+from utils.constants.states import SEARCH_INPUT_STATE
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import escape_html
+from utils.tokens import get_token_store
 
 from bot.handlers.music.spotify import download as spotify_download
 
 # Init logger
 logger = getLogger(__name__)
 
-# user_data key holding the rendered candidates (per user, in memory —
-# a process restart or a newer search invalidates old card buttons).
-CANDIDATES_KEY = "song_candidates"
 # user_data key holding the live search's (seq, asyncio.Event) cancel
-# token, set by run_search and consumed by on_search_cancel.
+# token, set by run_search and consumed by on_search_cancel. Per user:
+# the Cancel button lives on the searcher's own status message.
 CANCEL_KEY = "search_cancel"
 
+# bot_data store name for result sets: token -> {"query", "tracks"}.
+# Shared across users on purpose (spec §5.6): a card delivered into a
+# group resolves for whoever taps it.
+RESULTS_STORE = "search_results"
+# Spec §5.3: cache the result set for 300 seconds.
+RESULTS_TTL_SECONDS = 300
 
-def track_caption(track: TrackResult) -> str:
-    """HTML caption for one result card; track fields are escaped."""
-    album_line = f"\n📀 {escape_html(track.album)}" if track.album else ""
-    return TRACK_CARD.format(
+
+def card_caption(track: TrackResult, index: int, total: int) -> str:
+    """HTML caption for the result card (copy.track_caption, spec §5.3).
+    Track fields are escaped; missing album/duration omit their
+    component, never render None."""
+    return copy.track_caption(
         title=escape_html(track.title),
         artist=escape_html(track.artist),
-        album_line=album_line,
+        album=escape_html(track.album) if track.album else None,
         duration=format_duration(track.duration_sec),
+        index=index,
+        total=total,
     )
 
 
-async def _send_card(update: Update, context: MyContext, index: int, track: TrackResult) -> None:
-    """One result as a photo card, falling back to a plain-text card when
-    the cover is missing or Telegram cannot fetch it."""
-    markup = keyboards.track_keyboard(index, track.spotify_url)
-    caption = track_caption(track)
+def card_markup(token: str, index: int, track: TrackResult):
+    """The card's keyboard for one match (spec §5.3 row layout)."""
+    return keyboards.track_keyboard(
+        token, index=index, spotify_url=track.spotify_url or None
+    )
+
+
+async def _send_card(
+    update: Update, context: MyContext, token: str, index: int, total: int
+) -> None:
+    """Send the one result card (first match), photo or plain text."""
+    assert update.effective_chat is not None
+    track = get_token_store(context, RESULTS_STORE).get(token)["tracks"][index - 1]
     chat_id = update.effective_chat.id
+    caption = card_caption(track, index, total)
+    markup = card_markup(token, index, track)
     if track.cover_url:
         try:
             await context.bot.send_photo(
@@ -95,17 +110,71 @@ async def _send_card(update: Update, context: MyContext, index: int, track: Trac
     )
 
 
-async def run_search(update: Update, context: MyContext, query: str) -> None:
-    """Search Spotify for a plain-text query and send up to 3 track cards.
+async def _edit_card(
+    cq, context: MyContext, token: str, index: int, total: int
+) -> None:
+    """Edit the existing card message to another match (carousel).
 
-    Core (undecorated) so both music states reuse it from their own TEXT
-    handlers without a second DB row or chat action per message.
+    Telegram can always replace a text message; replacing media fails on
+    some message states, in which case the same message is edited to the
+    text card. A brand-new message is the last resort (spec §5.3).
+    """
+    store = get_token_store(context, RESULTS_STORE)
+    track = store.get(token)["tracks"][index - 1]
+    caption = card_caption(track, index, total)
+    markup = card_markup(token, index, track)
+    message = cq.message
+    chat_id = cq.message.chat_id
+    message_id = cq.message.message_id
+    if track.cover_url:
+        try:
+            await context.bot.edit_message_media(
+                chat_id=chat_id,
+                media=InputMediaPhoto(
+                    media=track.cover_url,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                ),
+                message_id=message_id,
+                reply_markup=markup,
+            )
+            return
+        except TelegramError:
+            logger.warning(
+                "Could not edit card media for cover %s; editing as text",
+                track.cover_url, exc_info=True,
+            )
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            text=caption,
+            parse_mode=ParseMode.HTML,
+            message_id=message_id,
+            reply_markup=markup,
+        )
+    except TelegramError:
+        # last resort: a fresh message in the same chat (spec §5.3)
+        logger.warning("Card message could not be edited; sending a new card",
+                       exc_info=True)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup,
+        )
+
+
+async def run_search(update: Update, context: MyContext, query: str) -> None:
+    """Search Spotify for a plain-text query and show the result card.
+
+    Core (undecorated) so the Search Music TEXT handler reuses it without
+    a second DB row or chat action per message.
 
     While the (slow) search runs, a live status message keeps the user
     informed: an instant "Searching for …" with a Cancel button, a
     re-sent typing indicator and an elapsed counter every few seconds.
-    The status message is ephemeral — the final answer (cards, no
-    results, failure, cancelled) is a clean message without a dead
+    The status message is ephemeral — the final answer (the result card,
+    no results, failure, cancelled) is a clean message without a dead
     Cancel button.
     """
     assert update.effective_chat is not None
@@ -143,21 +212,24 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
         logger.debug("search status message already gone", exc_info=True)
 
     if cancelled:
-        await message.reply_text(SEARCH_CANCELLED, parse_mode=ParseMode.HTML)
+        await message.reply_text(copy.SEARCH_CANCELLED, parse_mode=ParseMode.HTML)
         return
     if failed:
-        await message.reply_text(SEARCH_FAILED, parse_mode=ParseMode.HTML)
+        await message.reply_text(copy.SEARCH_FAILED, parse_mode=ParseMode.HTML)
         return
     if not results:
         await message.reply_text(
-            NO_RESULTS_FOUND.format(query=safe_query),
+            copy.SEARCH_NO_RESULTS.format(query=safe_query),
             parse_mode=ParseMode.HTML,
         )
         return
 
-    context.user_data[CANDIDATES_KEY] = results
-    for index, track in enumerate(results):
-        await _send_card(update, context, index, track)
+    # The token names this exact result set for the next 300 s (spec
+    # §5.3). Shared store: any user who can see the card can tap it.
+    token = get_token_store(context, RESULTS_STORE).put(
+        {"query": query, "tracks": results}, RESULTS_TTL_SECONDS
+    )
+    await _send_card(update, context, token, 1, len(results))
 
 
 async def _await_search_or_cancel(query: str, cancel_event: asyncio.Event):
@@ -202,7 +274,7 @@ async def _await_search_or_cancel(query: str, cancel_event: asyncio.Event):
 
 
 async def on_search_cancel(update: Update, context: MyContext):
-    """Cancel button on the live search status message (2026-10-27 UX).
+    """Cancel button on the live search status message.
 
     Sets the event that run_search is racing against; run_search then
     turns its status message into the "cancelled" answer. Stale buttons
@@ -217,60 +289,109 @@ async def on_search_cancel(update: Update, context: MyContext):
 
     entry = context.user_data.get(CANCEL_KEY)
     if not entry or entry[0] != seq:
-        await cq.answer(STALE_SEARCH_CANCEL)
+        await cq.answer(copy.TOAST_SEARCH_CANCEL_STALE)
         return
     entry[1].set()
     await cq.answer()
+
+
+async def on_song_action(update: Update, context: MyContext):
+    """Buttons on the tokenized result card (spec §5.3, §5.6).
+
+    `song:dl:<token>:<i>` / `song:prev:<token>:<i>` — the in-chat
+    carousel card (i is the 1-based match position); without the index
+    the token names a single shared track (inline cards, any user may
+    tap). `song:prevcard`/`song:next` edit the card to the adjacent
+    match. An unknown or expired token answers the stale toast and runs
+    nothing (spec §5.3, §16).
+    """
+    cq = update.callback_query
+    assert cq is not None
+    match = re.match(SONG_ACTION_CALLBACK_PATTERN, cq.data or "")
+    assert match is not None  # the handler's pattern guarantees this
+    action, token, idx_s = match.group(1), match.group(2), match.group(3)
+
+    entry = get_token_store(context, RESULTS_STORE).get(token)
+    if entry is None:
+        # expired after 300 s, unknown, or the process restarted
+        # (the store is in-memory, spec §2.5)
+        await cq.answer(copy.TOAST_SEARCH_STALE)
+        return
+    tracks = entry["tracks"]
+
+    if idx_s is None:
+        # shared inline card: the card IS the track (spec §5.6)
+        track = tracks[0]
+    else:
+        index = int(idx_s)
+        if not 1 <= index <= len(tracks):
+            # a token can only point at its own result set; an out-of-
+            # range index is stale by construction
+            await cq.answer(copy.TOAST_SEARCH_STALE)
+            return
+        track = tracks[index - 1]
+
+    if action == "dl":
+        await cq.answer()
+        await spotify_download.run_spotify_download(
+            update, context, track.spotify_url
+        )
+    elif action == "prev":
+        await _send_preview(cq, update, context, track)
+    elif action in ("prevcard", "next"):
+        # only rendered on indexed (in-chat) cards
+        new_index = index + (1 if action == "next" else -1)
+        if new_index < 1:
+            await cq.answer(copy.TOAST_TRACK_FIRST)
+            return
+        if new_index > len(tracks):
+            await cq.answer(copy.TOAST_TRACK_LAST)
+            return
+        await _edit_card(cq, context, token, new_index, len(tracks))
+
+
+async def on_song_action_legacy(update: Update, context: MyContext):
+    """Pre-token rollout card buttons (index-only payloads).
+
+    The index alone cannot be resolved to the result set it belonged to
+    without guessing "the user's latest search" — the most-recent
+    fallback the redesign forbids (spec §16). Toast only.
+    """
+    cq = update.callback_query
+    assert cq is not None
+    await cq.answer(copy.TOAST_SEARCH_STALE)
+
+
+async def on_search_again(update: Update, context: MyContext):
+    """[🔎 Search again] on the result card: re-run the same query with
+    a fresh result set (spec §5.3)."""
+    cq = update.callback_query
+    assert cq is not None
+    match = re.match(SEARCH_AGAIN_CALLBACK_PATTERN, cq.data or "")
+    assert match is not None  # the handler's pattern guarantees this
+    entry = get_token_store(context, RESULTS_STORE).get(match.group(1))
+    if entry is None:
+        await cq.answer(copy.TOAST_SEARCH_STALE)
+        return
+    await cq.answer()
+    await run_search(update, context, entry["query"])
 
 
 @send_action(ChatAction.TYPING)
 @sync_user
 @log_message
 async def handler(update: Update, context: MyContext):
-    """TEXT entry for MUSIC_STATE: any plain text is a song query."""
+    """TEXT entry for the Search Music input mode (spec §2.2, §6.1):
+    any plain text is a song query."""
     assert update.message is not None
     await run_search(update, context, update.message.text or "")
-    return MUSIC_STATE
-
-
-async def on_song_action(update: Update, context: MyContext):
-    """Buttons on the search-result cards (plan 1.2).
-
-    `song:dl:<i>` downloads the i-th candidate via the shared spotdl
-    core; `song:lyr:<i>` is the Phase 2.4 lyrics slot (coming-soon for
-    now). Registered in every conversation state and in group 1, before
-    the catch-all callback handlers.
-    """
-    cq = update.callback_query
-    assert cq is not None
-    match = re.match(SONG_ACTION_CALLBACK_PATTERN, cq.data or "")
-    assert match is not None  # the handler's pattern guarantees this
-    action, index = match.group(1), int(match.group(2))
-
-    candidates = context.user_data.get(CANDIDATES_KEY) or []
-    if index >= len(candidates):
-        # stale card: a newer search replaced the candidates, or the
-        # process restarted (user_data is in-memory)
-        await cq.answer(SONG_EXPIRED, show_alert=True)
-        return
-
-    track = candidates[index]
-    if action == "lyr":
-        await cq.answer(COMMING_SOON, show_alert=True)
-        return
-
-    if action == "prev":
-        await _send_preview(cq, update, context, track)
-        return
-
-    await cq.answer()
-    await spotify_download.run_spotify_download(update, context, track.spotify_url)
+    return SEARCH_INPUT_STATE
 
 
 async def _send_preview(
     cq, update: Update, context: MyContext, track: TrackResult
 ) -> None:
-    """Send the 30s preview clip for a card track (plan 1.4).
+    """Send the 30s preview clip for a card track.
 
     Spotify's own preview_url when the item carries one; otherwise the
     iTunes/Deezer fallback (the free backend never does). Telegram fetches
@@ -281,7 +402,7 @@ async def _send_preview(
     if not url:
         url = await resolve_preview_url(track.title, track.artist)
     if not url:
-        await cq.answer(NO_PREVIEW, show_alert=True)
+        await cq.answer(copy.TOAST_TRACK_NO_PREVIEW)
         return
     await cq.answer()
     await context.bot.send_audio(

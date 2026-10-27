@@ -1,9 +1,13 @@
-"""Phase A: central inline navigation.
+"""Central inline navigation (UX redesign §2).
 
-Every navigation action is a callback id (see utils/constants/keyboards.py)
-that names its destination screen. The single `navigate` callback handler
-edits the clicked message in place — no more regex matching of typed
-button text, no more new message per menu hop.
+Every navigation action is a stateless callback id naming its destination
+screen — the same dispatcher works from any state and before /start, and
+navigating NEVER cancels active work (spec §1.3: a task is not a screen).
+
+Legacy menu-tree callbacks from the pre-redesign UI stay mapped here as
+aliases (spec §16), so buttons on old messages keep working after a
+restart. The old `YOUTUBE_DOWNLOAD -> Instagram` back bug is gone with
+the old tree: every back destination is Home.
 """
 from logging import getLogger
 
@@ -12,76 +16,124 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from utils import keyboards
+from utils import copy, keyboards
 from utils.constants.keyboards import (
-    CB_START,
+    CB_AI,
+    CB_AI_CHAT,
+    CB_AI_TTI,
+    CB_HOME,
     CB_INSTAGRAM,
     CB_INSTAGRAM_DOWNLOAD,
     CB_MUSIC,
     CB_MUSIC_SPOTIFY,
     CB_PINTEREST,
+    CB_SEARCH,
+    CB_START,
     CB_YOUTUBE,
     CB_YOUTUBE_DOWNLOAD,
     CB_YOUTUBE_MP3,
-    CB_AI,
-    CB_AI_CHAT,
-)
-from utils.constants.messages import (
-    AI_CHAT_INSTRUCTION,
-    CHOOSE_MESSAGE,
-    HELLO,
-    INSTAGRAM_INSTRUCTION,
-    PINTEREST_INSTRUCTION,
-    SPOTIFY_INSTRUCTION,
-    YOUTUBE_INSTRUCTION,
 )
 from utils.constants.states import (
-    START_STATE,
-    INSTAGRAM_STATE,
-    INSTAGRAM_DOWNLOAD_STATE,
-    MUSIC_STATE,
-    MUSIC_SPOTIFY_STATE,
-    PINTEREST_STATE,
-    YOUTUBE_STATE,
-    YOUTUBE_DOWNLOAD_STATE,
-    YOUTUBE_MP3_STATE,
-    AI_STATE,
     AI_CHAT_STATE,
+    HOME_STATE,
+    INSTAGRAM_INPUT_STATE,
+    PINTEREST_INPUT_STATE,
+    SEARCH_INPUT_STATE,
+    YOUTUBE_INPUT_STATE,
 )
 from utils.helpers import escape_html, send_html_msg, stringify_none_str
 
 # Init logger
 logger = getLogger(__name__)
 
-# callback data -> (message text, keyboard, conversation state)
-NAVIGATOR = {
-    CB_START: (CHOOSE_MESSAGE, keyboards.start_keyboard_rm, START_STATE),
-    CB_INSTAGRAM: (CHOOSE_MESSAGE, keyboards.instagram_state_keyboard_rm, INSTAGRAM_STATE),
-    CB_INSTAGRAM_DOWNLOAD: (INSTAGRAM_INSTRUCTION, keyboards.instagram_download_state_keyboard_rm, INSTAGRAM_DOWNLOAD_STATE),
-    CB_MUSIC: (CHOOSE_MESSAGE, keyboards.music_state_keyboard_rm, MUSIC_STATE),
-    CB_MUSIC_SPOTIFY: (SPOTIFY_INSTRUCTION, keyboards.music_spotify_state_keyboard_rm, MUSIC_SPOTIFY_STATE),
-    CB_PINTEREST: (PINTEREST_INSTRUCTION, keyboards.pinterest_state_keyboard_rm, PINTEREST_STATE),
-    CB_YOUTUBE: (CHOOSE_MESSAGE, keyboards.youtube_state_keyboard_rm, YOUTUBE_STATE),
-    CB_YOUTUBE_DOWNLOAD: (YOUTUBE_INSTRUCTION, keyboards.youtube_download_state_keyboard_rm, YOUTUBE_DOWNLOAD_STATE),
-    CB_YOUTUBE_MP3: (YOUTUBE_INSTRUCTION, keyboards.youtube_mp3_state_keyboard_rm, YOUTUBE_MP3_STATE),
-    CB_AI: (CHOOSE_MESSAGE, keyboards.ai_state_keyboard_rm, AI_STATE),
-    CB_AI_CHAT: (AI_CHAT_INSTRUCTION, keyboards.ai_chat_state_keyboard_rm, AI_CHAT_STATE),
-}
 
-
-def _hello_text(update: Update) -> str:
-    """The start menu shows the full greeting (same as /start)."""
+def home_text(update: Update) -> str:
+    """The Home greeting (spec §2.1): first name only — no user ID,
+    no bot ID."""
     user = update.effective_user
     assert user is not None
     first_name = escape_html(stringify_none_str(user.first_name))
-    last_name = escape_html(stringify_none_str(user.last_name))
-    username = escape_html(stringify_none_str(user.username))
+    return copy.HOME_GREETING.format(first_name=first_name or "there")
 
-    name = " ".join(part for part in (first_name, last_name) if part)
-    if username:
-        name = f"{name} (@{username})" if name else f"@{username}"
 
-    return HELLO.format(name=name or "there", user_id=user.id)
+# callback data -> (message text, keyboard, conversation state)
+# Texts are templates from the canonical copy deck (utils/copy.py).
+NAVIGATOR = {
+    CB_START: (home_text, keyboards.home_keyboard, HOME_STATE),
+    CB_HOME: (home_text, keyboards.home_keyboard, HOME_STATE),
+    CB_SEARCH: (copy.SEARCH_PROMPT, keyboards.search_input_keyboard, SEARCH_INPUT_STATE),
+    # legacy music tree -> the one Search Music input screen
+    CB_MUSIC: (copy.SEARCH_PROMPT, keyboards.search_input_keyboard, SEARCH_INPUT_STATE),
+    CB_MUSIC_SPOTIFY: (copy.SEARCH_PROMPT, keyboards.search_input_keyboard, SEARCH_INPUT_STATE),
+    # one hop less: platform button goes straight to its input prompt
+    CB_INSTAGRAM: (copy.INSTAGRAM_PROMPT, keyboards.instagram_input_keyboard, INSTAGRAM_INPUT_STATE),
+    CB_INSTAGRAM_DOWNLOAD: (copy.INSTAGRAM_PROMPT, keyboards.instagram_input_keyboard, INSTAGRAM_INPUT_STATE),
+    CB_PINTEREST: (copy.PINTEREST_PROMPT, keyboards.pinterest_input_keyboard, PINTEREST_INPUT_STATE),
+    CB_YOUTUBE: (copy.YOUTUBE_PROMPT, keyboards.youtube_input_keyboard, YOUTUBE_INPUT_STATE),
+    CB_YOUTUBE_DOWNLOAD: (copy.YOUTUBE_PROMPT, keyboards.youtube_input_keyboard, YOUTUBE_INPUT_STATE),
+    CB_YOUTUBE_MP3: (copy.YOUTUBE_PROMPT, keyboards.youtube_input_keyboard, YOUTUBE_INPUT_STATE),
+    CB_AI: (copy.AI_PROMPT, keyboards.ai_chat_keyboard, AI_CHAT_STATE),
+    CB_AI_CHAT: (copy.AI_PROMPT, keyboards.ai_chat_keyboard, AI_CHAT_STATE),
+}
+
+# Back mapping (spec §2.4). The new IA has exactly one parent for every
+# screen: Home. Kept as an explicit table so a deeper tree in a future
+# release only changes this dict.
+BACK_DESTINATION = {
+    "search": HOME_STATE,
+    "instagram": HOME_STATE,
+    "youtube": HOME_STATE,
+    "pinterest": HOME_STATE,
+    "ai": HOME_STATE,
+    "tasks": HOME_STATE,
+    "legacy": HOME_STATE,
+}
+
+
+async def on_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """`nav:back:<screen>` -> the screen's parent (always Home today)."""
+    cq = update.callback_query
+    if cq is None:
+        return None
+    await cq.answer()
+    screen = (cq.data or "").split(":", 2)[2]
+    state = BACK_DESTINATION.get(screen, HOME_STATE)
+    await _show_screen(update, context, home_text(update), keyboards.home_keyboard)
+    return state
+
+
+async def on_ai_tti_stale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Defensive handler for the retired Text-to-image button (spec §10).
+
+    Old messages may still carry `nav:ai:ttI`; answer with a toast so the
+    client spinner stops, and never change state.
+    """
+    cq = update.callback_query
+    if cq is None:
+        return None
+    await cq.answer(copy.TOAST_IMAGE_GEN_UNAVAILABLE)
+    return None
+
+
+async def _show_screen(update: Update, context, text, keyboard) -> None:
+    """Edit the clicked message into `text`+`keyboard`; send fresh if the
+    message can't be re-texted (e.g. it carries media)."""
+    cq = update.callback_query
+    assert cq is not None
+    if cq.message is None:
+        return
+    try:
+        await cq.message.edit_text(
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+    except BadRequest as err:
+        if "not modified" in str(err).lower():
+            return
+        logger.warning(f"Could not edit message {cq.message.message_id} in place: {err}")
+        assert update.effective_chat is not None
+        await send_html_msg(context.bot, update.effective_chat.id, text, keyboard)
 
 
 async def navigate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,26 +150,8 @@ async def navigate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return None
 
     text, keyboard, state = item
-    if cq.data == CB_START:
-        text = _hello_text(update)
-
-    if cq.message is None:
-        return state
-
-    try:
-        await cq.message.edit_text(
-            text=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard,
-        )
-    except BadRequest as err:
-        if "not modified" in str(err).lower():
-            # Same screen clicked again — nothing to do.
-            return state
-        # Some messages can't be re-texted (e.g. media messages that carry
-        # a Back/Home button): fall back to a fresh menu message.
-        logger.warning(f"Could not edit message {cq.message.message_id} in place: {err}")
-        assert update.effective_chat is not None
-        await send_html_msg(context.bot, update.effective_chat.id, text, keyboard)
-
+    if callable(text):
+        # Home's greeting needs the user's first name at render time.
+        text = text(update)
+    await _show_screen(update, context, text, keyboard)
     return state

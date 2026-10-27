@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import configurations.settings as settings
 import main
-from utils.constants.messages import SOMETHING_WENT_WRONG
 
 
 class RecordingBot:
@@ -152,8 +151,9 @@ async def test_profile_photo_missing_logo_swallowed(tmp_path, monkeypatch):
 # --- handle_stray_callback (group 1, no active conversation) ----------------
 
 async def test_stray_callback_answered():
-    """A non-nav button click with no conversation is just answered so the
-    client's spinner stops."""
+    """The catch-all is a last-resort safety net: it only answers so the
+    client's spinner stops (the shared chain's navigator already handles
+    everything it recognizes)."""
     update = MagicMock()
     update.callback_query = MagicMock()
     update.callback_query.data = "not:a:nav:id"
@@ -162,20 +162,36 @@ async def test_stray_callback_answered():
     update.callback_query.answer.assert_awaited_once()
 
 
-async def test_stray_nav_callback_runs_navigator(monkeypatch):
-    """A nav button click without a conversation drops the user into the
-    menu via the shared navigator (plan 1.1 zero-friction entry)."""
-    navigate_mock = AsyncMock()
-    monkeypatch.setattr(main, "navigate", navigate_mock)
+async def test_stray_nav_callback_goes_to_navigator():
+    """A nav button click without a conversation is claimed by the shared
+    chain's navigator (group 1) before the catch-all — zero-friction entry
+    for users who never sent /start."""
+    from telegram import Update
+    from telegram.ext import ApplicationBuilder
+    from bot.navigation import navigate
 
-    update = MagicMock()
-    update.callback_query = MagicMock()
-    update.callback_query.data = "nav:start"
-    update.callback_query.answer = AsyncMock()
-    await main.handle_stray_callback(update, MagicMock())
+    app = ApplicationBuilder().token(settings.TOKEN).build()
+    main.register_handlers(app)
+    group1 = app.handlers[1]
 
-    navigate_mock.assert_awaited_once()
-    update.callback_query.answer.assert_not_awaited()
+    def unwrap(h):
+        return getattr(h.callback, "_harzad_guarded", h.callback)
+
+    update = Update.de_json(
+        {
+            "update_id": 1,
+            "callback_query": {
+                "id": "1",
+                "from": {"id": 1, "is_bot": False, "first_name": "a"},
+                "chat_instance": "x",
+                "data": "nav:start",
+            },
+        },
+        None,
+    )
+    matched = [h for h in group1 if h.check_update(update)]
+    assert matched
+    assert unwrap(matched[0]) is navigate
 
 
 MSG = {
@@ -197,10 +213,10 @@ async def test_stray_callback_no_cq_noop():
 # --- on_error -------------------------------------------------------------------------------
 
 async def test_on_error_notifies_user(monkeypatch):
-    react = AsyncMock()
-    monkeypatch.setattr(main, "react_message", react)
-
+    """Spec §7: unexpected-error class — no blame, no misleading reaction,
+    a Home exit; no Retry button (no safe replay payload)."""
     from telegram import Update
+    from utils import copy, keyboards
 
     update = MagicMock(spec=Update)  # isinstance() must pass
     update.effective_message = MagicMock()
@@ -210,19 +226,19 @@ async def test_on_error_notifies_user(monkeypatch):
 
     await main.on_error(update, context)
 
-    react.assert_awaited_once()
     update.effective_message.reply_text.assert_awaited_once()
     # on_error passes the text positionally
-    assert update.effective_message.reply_text.await_args.args[0] == SOMETHING_WENT_WRONG
+    assert update.effective_message.reply_text.await_args.args[0] == copy.ERROR_UNEXPECTED
+    kwargs = update.effective_message.reply_text.await_args.kwargs
+    assert kwargs["parse_mode"] == "HTML"
+    assert kwargs["reply_markup"] is keyboards.home_keyboard
 
 
-async def test_on_error_without_message_is_quiet(monkeypatch):
-    react = AsyncMock()
-    monkeypatch.setattr(main, "react_message", react)
-    # edited_message-only update: effective_message is None
+async def test_on_error_without_message_is_quiet():
+    """A callback-only update has no effective_message: log and stay
+    silent (nothing to reply to)."""
     from telegram import Update
 
-    # callback-only update without a message: effective_message is None
     update = Update.de_json(
         {
             "update_id": 1,
@@ -236,15 +252,11 @@ async def test_on_error_without_message_is_quiet(monkeypatch):
         None,
     )
     assert update.effective_message is None
-    await main.on_error(update, MagicMock())
-    react.assert_not_awaited()
+    await main.on_error(update, MagicMock())  # must not raise
 
 
-async def test_on_error_non_update_object_is_quiet(monkeypatch):
-    react = AsyncMock()
-    monkeypatch.setattr(main, "react_message", react)
-    await main.on_error("not an update", MagicMock())
-    react.assert_not_awaited()
+async def test_on_error_non_update_object_is_quiet():
+    await main.on_error("not an update", MagicMock())  # must not raise
 
 
 # --- register_handlers (plan 1.1 wiring) ---------------------------------------
@@ -254,9 +266,8 @@ def test_register_handlers_builds_tree():
     universal dispatcher in every conversation state (plan 1.1)."""
     from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ConversationHandler, MessageHandler
     from utils.constants.states import (
-        AI_CHAT_STATE, AI_STATE, INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE,
-        MUSIC_SPOTIFY_STATE, MUSIC_STATE, PINTEREST_STATE, START_STATE,
-        YOUTUBE_DOWNLOAD_STATE, YOUTUBE_MP3_STATE, YOUTUBE_STATE,
+        AI_CHAT_STATE, HOME_STATE, INSTAGRAM_INPUT_STATE,
+        PINTEREST_INPUT_STATE, SEARCH_INPUT_STATE, YOUTUBE_INPUT_STATE,
     )
     from bot.handlers import dispatch
     from bot.handlers.music.spotify import search as spotify_search
@@ -267,10 +278,9 @@ def test_register_handlers_builds_tree():
 
     conv = app.handlers[0][0]
     assert isinstance(conv, ConversationHandler)
-    for state in (START_STATE, INSTAGRAM_STATE, INSTAGRAM_DOWNLOAD_STATE,
-                  MUSIC_STATE, MUSIC_SPOTIFY_STATE, PINTEREST_STATE,
-                  YOUTUBE_STATE, YOUTUBE_DOWNLOAD_STATE, YOUTUBE_MP3_STATE,
-                  AI_STATE, AI_CHAT_STATE):
+    # the six logical input modes (spec §2.5)
+    for state in (HOME_STATE, SEARCH_INPUT_STATE, INSTAGRAM_INPUT_STATE,
+                  YOUTUBE_INPUT_STATE, PINTEREST_INPUT_STATE, AI_CHAT_STATE):
         state_handlers = conv.states[state]
         link_handlers = [
             h for h in state_handlers
@@ -330,6 +340,10 @@ def test_register_handlers_builds_tree():
         h for h in group1
         if isinstance(h, CallbackQueryHandler) and unwrap(h) is spotify_search.on_search_cancel
     )
+    nav = next(
+        h for h in group1
+        if isinstance(h, CallbackQueryHandler) and unwrap(h) is navigate
+    )
     stray = next(
         h for h in group1
         if isinstance(h, CallbackQueryHandler) and unwrap(h) is main.handle_stray_callback
@@ -337,13 +351,15 @@ def test_register_handlers_builds_tree():
     # Every group-1 fallback must be guard-wrapped: PTB evaluates every
     # group for every update, so an unguarded copy double-fires for
     # users with an active conversation (live incident 2026-10-27).
-    for h in (link, fmt, song, cancel, stray):
+    for h in (link, fmt, song, cancel, nav, stray):
         assert hasattr(h.callback, "_harzad_guarded"), f"unguarded group-1 handler {h.callback}"
     # first match in a group consumes the update: the specific handlers
-    # must be registered before the catch-all
+    # must be registered before the catch-all, and the shared chain's
+    # patternless navigator before that
     assert group1.index(fmt) < group1.index(stray)
     assert group1.index(song) < group1.index(stray)
     assert group1.index(cancel) < group1.index(stray)
+    assert group1.index(nav) < group1.index(stray)
 
     # inline query mode (plan 1.3) is registered in group 0
     from telegram.ext import InlineQueryHandler
@@ -442,11 +458,12 @@ async def test_group1_guard_inline_callback_no_chat():
 
 
 def test_music_state_searches_plain_text():
-    """MUSIC_STATE carries a plain-text search entry (plan 1.2) so typing
-    a song name in the music state works without a URL."""
+    """SEARCH_INPUT_STATE (Search Music) routes plain text through the
+    spotify download handler, which treats non-URL text as a song query
+    (spec §6.1) — no URL needed to search."""
     from telegram.ext import ApplicationBuilder, ConversationHandler, MessageHandler, filters
-    from utils.constants.states import MUSIC_STATE
-    from bot.handlers.music.spotify import search as spotify_search
+    from utils.constants.states import SEARCH_INPUT_STATE
+    from bot.handlers.music.spotify import download as spotify_download
 
     app = ApplicationBuilder().token(settings.TOKEN).build()
     main.register_handlers(app)
@@ -455,7 +472,7 @@ def test_music_state_searches_plain_text():
     assert isinstance(conv, ConversationHandler)
     # filters.TEXT is a singleton instance — compare by identity
     text_handlers = [
-        h for h in conv.states[MUSIC_STATE]
+        h for h in conv.states[SEARCH_INPUT_STATE]
         if isinstance(h, MessageHandler) and h.filters is filters.TEXT
     ]
-    assert any(h.callback is spotify_search.handler for h in text_handlers)
+    assert any(h.callback is spotify_download.handler for h in text_handlers)

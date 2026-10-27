@@ -17,6 +17,7 @@ from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
 from utils.helpers import escape_html, send_html_msg
 from utils import keyboards
+from bot.handlers import common
 
 from utils.instagram import get_user_client_instagram
 
@@ -40,6 +41,13 @@ llm = ChatOpenAI(
 @sync_user
 @log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """TEXT entry for AI Chat (spec §9).
+
+    Supported media links never reach the LLM: the universal dispatcher
+    runs first in every state. Unsupported URLs get the supported-
+    platforms error (shared precheck), not a prompt injection into the
+    model.
+    """
     assert update.message is not None
     message = update.message.text
     assert message is not None
@@ -47,6 +55,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert update.effective_chat is not None
     assert update.effective_message is not None
     assert update.effective_user is not None
+
+    if await common.precheck(update, context):
+        return AI_CHAT_STATE
 
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     
@@ -57,6 +68,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     logger.debug("AI chat response: %s", response.content)
     
-    await send_html_msg(context.bot, update.effective_chat.id, escape_html(response.content), keyboards.ai_chat_state_keyboard_rm)
+    await send_html_msg(context.bot, update.effective_chat.id, escape_html(response.content), keyboards.ai_chat_keyboard)
     
     return AI_CHAT_STATE

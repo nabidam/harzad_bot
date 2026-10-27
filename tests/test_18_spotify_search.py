@@ -1,6 +1,7 @@
-"""#18 Spotify text search & track cards (plan 1.2) — raw search mapping,
-300s cache, card rendering, song-card callbacks, state wiring, live
-search feedback + cancel (2026-10-27 UX)."""
+"""#18 Spotify text search & the single editable result card (redesign §5) —
+raw search mapping, 300s cache, card rendering, tokenized song-card
+callbacks, carousel, stale toasts, state wiring, live search feedback +
+cancel."""
 import asyncio
 import re
 import time
@@ -13,16 +14,14 @@ import connectors.spotify_search as spotify_search
 import bot.handlers.music.spotify.download as spotify_download
 import bot.handlers.music.spotify.search as search
 import spotdl.utils.spotify as spotdl_spotify
-from utils import keyboards
-from utils.constants.keyboards import SONG_ACTION_CALLBACK_PATTERN
-from utils.constants.messages import (
-    COMMING_SOON,
-    NO_RESULTS_FOUND,
-    SEARCH_FAILED,
-    SONG_EXPIRED,
-    STALE_SEARCH_CANCEL,
+from telegram.error import BadRequest
+from utils import copy, keyboards
+from utils.constants.keyboards import (
+    SONG_ACTION_CALLBACK_PATTERN,
+    SONG_ACTION_LEGACY_PATTERN,
 )
-from utils.constants.states import MUSIC_SPOTIFY_STATE, MUSIC_STATE
+from utils.constants.states import SEARCH_INPUT_STATE
+from utils.tokens import get_token_store
 
 
 def _fresh_tg_id() -> int:
@@ -57,20 +56,22 @@ def make_context():
     context.bot = MagicMock()
     for m in ("send_chat_action", "send_video", "send_audio",
               "send_photo", "editMessageText", "edit_message_text",
-              "deleteMessage", "delete_message",
+              "edit_message_media", "deleteMessage", "delete_message",
               "set_message_reaction"):
         setattr(context.bot, m, AsyncMock())
     context.bot.send_message = AsyncMock(return_value=status)
     return context
 
 
-def make_callback(data):
+def make_callback(data, *, message=None):
     update = MagicMock()
     cq = MagicMock()
     cq.data = data
     cq.answer = AsyncMock()
+    cq.message = message or MagicMock(chat_id=7, message_id=600, photo=None)
+    cq.message_id = None
     update.callback_query = cq
-    update.effective_message = MagicMock(chat_id=7)
+    update.effective_message = cq.message
     return update
 
 
@@ -86,6 +87,13 @@ def fake_track(index=0, **kw):
     )
     base.update(kw)
     return spotify_search.TrackResult(**base)
+
+
+def store_tracks(context, tracks, query="q", ttl=search.RESULTS_TTL_SECONDS):
+    """Put a result set in the shared token store; return its token."""
+    return get_token_store(context, search.RESULTS_STORE).put(
+        {"query": query, "tracks": tracks}, ttl
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -213,14 +221,22 @@ def test_format_duration(secs, expected):
     assert spotify_search.format_duration(secs) == expected
 
 
-# --- run_search: card rendering ---------------------------------------------------
+# --- run_search: the single result card (spec §5.3) --------------------------------
 
 def _buttons(markup):
     return [b for row in markup.inline_keyboard for b in row]
 
 
-async def test_run_search_sends_photo_and_text_cards(monkeypatch):
-    tracks = [fake_track(0), fake_track(1, cover_url=None)]
+def _card_calls(context, marker):
+    """send_message is also the live-status channel — pick the card calls."""
+    return [
+        c for c in context.bot.send_message.await_args_list
+        if marker in c.kwargs.get("text", "")
+    ]
+
+
+async def test_run_search_sends_one_card_with_token_buttons(monkeypatch):
+    tracks = [fake_track(0), fake_track(1)]
     monkeypatch.setattr(
         search, "search_tracks", AsyncMock(return_value=tracks)
     )
@@ -229,32 +245,46 @@ async def test_run_search_sends_photo_and_text_cards(monkeypatch):
 
     await search.run_search(update, context, "starboy")
 
-    # candidates stashed for the callback buttons
-    assert context.user_data[search.CANDIDATES_KEY] == tracks
-
-    # card 0 has a cover -> photo message
+    # ONE card, not three messages (spec §5.3); the first match is shown
     context.bot.send_photo.assert_awaited_once()
     kw = context.bot.send_photo.await_args.kwargs
     assert kw["photo"] == tracks[0].cover_url
-    assert "<b>Title 0</b>" in kw["caption"]
-    assert "<i>Artist 0</i>" in kw["caption"]
-    assert "📀 Album 0" in kw["caption"]
-    assert "3:34" in kw["caption"]
-    assert kw["reply_markup"] is not None
-    assert _buttons(kw["reply_markup"])[0].callback_data == "song:dl:0"
-
-    # card 1 has no cover -> plain-text fallback, same buttons
-    # (send_message is also the live-status channel — pick the card call)
-    card_calls = [
-        c for c in context.bot.send_message.await_args_list
-        if "<b>Title 1</b>" in c.kwargs.get("text", "")
-    ]
-    assert len(card_calls) == 1
-    kw = card_calls[0].kwargs
-    assert _buttons(kw["reply_markup"])[0].callback_data == "song:dl:1"
+    assert "Match 1 of 2" in kw["caption"]
+    assert kw["protect_content"] is True
+    flat = [b.callback_data for b in _buttons(kw["reply_markup"]) if b.callback_data]
+    token = flat[0].split(":")[2]
+    assert f"song:dl:{token}:1" in flat
+    assert f"song:prev:{token}:1" in flat
+    assert f"song:prevcard:{token}:1" in flat
+    assert f"song:next:{token}:1" in flat
+    assert f"search:again:{token}" in flat
+    assert "nav:home" in flat
+    # the result set is cached behind that token for the card's lifetime
+    entry = get_token_store(context, search.RESULTS_STORE).get(token)
+    assert entry is not None
+    assert entry["tracks"] == tracks
+    assert entry["query"] == "starboy"
 
     # the ephemeral status message was cleaned up
     context.status_message.delete.assert_awaited_once()
+
+
+async def test_run_search_first_match_without_cover_is_text_card(monkeypatch):
+    tracks = [fake_track(0, cover_url=None), fake_track(1)]
+    monkeypatch.setattr(
+        search, "search_tracks", AsyncMock(return_value=tracks)
+    )
+    update = make_update("x")
+    context = make_context()
+
+    await search.run_search(update, context, "x")
+
+    context.bot.send_photo.assert_not_awaited()
+    card_calls = _card_calls(context, "<b>Title 0</b>")
+    assert len(card_calls) == 1
+    kw = card_calls[0].kwargs
+    flat = [b.callback_data for b in _buttons(kw["reply_markup"]) if b.callback_data]
+    assert f"song:dl:{flat[0].split(':')[2]}:1" in flat
 
 
 async def test_run_search_escapes_html_in_caption(monkeypatch):
@@ -273,8 +303,6 @@ async def test_run_search_escapes_html_in_caption(monkeypatch):
 
 
 async def test_run_search_cover_fetch_failure_falls_back(monkeypatch):
-    from telegram.error import BadRequest
-
     monkeypatch.setattr(
         search, "search_tracks", AsyncMock(return_value=[fake_track(0)])
     )
@@ -286,11 +314,7 @@ async def test_run_search_cover_fetch_failure_falls_back(monkeypatch):
 
     await search.run_search(update, context, "x")  # must not raise
 
-    card_calls = [
-        c for c in context.bot.send_message.await_args_list
-        if "<b>Title 0</b>" in c.kwargs.get("text", "")
-    ]
-    assert len(card_calls) == 1
+    assert len(_card_calls(context, "<b>Title 0</b>")) == 1
 
 
 async def test_run_search_no_results(monkeypatch):
@@ -301,9 +325,8 @@ async def test_run_search_no_results(monkeypatch):
     await search.run_search(update, context, "zzz qqq")
 
     context.bot.send_photo.assert_not_awaited()
-    assert search.CANDIDATES_KEY not in context.user_data
     text = update.message.reply_text.await_args.args[0]
-    assert "No results" in text
+    assert "No matches" in text
     assert "zzz qqq" in text
     context.status_message.delete.assert_awaited_once()
 
@@ -319,8 +342,7 @@ async def test_run_search_backend_failure_reports(monkeypatch):
     await search.run_search(update, context, "x")  # must not raise
 
     text = update.message.reply_text.await_args.args[0]
-    assert "Couldn't reach Spotify" in text
-    assert search.CANDIDATES_KEY not in context.user_data
+    assert text == copy.SEARCH_FAILED
     context.status_message.delete.assert_awaited_once()
 
 
@@ -336,7 +358,7 @@ async def test_run_search_empty_query_is_noop(monkeypatch):
     context.bot.send_message.assert_not_awaited()  # no status without a query
 
 
-# --- live search feedback + cancel (2026-10-27 UX) ---------------------------------
+# --- live search feedback + cancel ---------------------------------------------------
 
 async def _wait_for(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
@@ -349,17 +371,18 @@ async def _wait_for(predicate, timeout=5.0):
 def test_search_cancel_keyboard():
     kb = keyboards.search_cancel_keyboard("ab12cd34")
     btn = kb.inline_keyboard[0][0]
-    assert btn.text == "⏹️ Cancel"
-    assert btn.callback_data == "srx:c:ab12cd34"
+    assert btn.text == copy.BTN_SEARCH_CANCEL
+    assert btn.callback_data == "search:cancel:ab12cd34"
     assert btn.style is None  # neutral — escape hatch, not the action
 
 
 def test_search_cancel_pattern():
     from utils.constants.keyboards import SEARCH_CANCEL_CALLBACK_PATTERN
 
+    assert re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "search:cancel:ab12cd34")
+    # the pre-token payload stays accepted as a legacy alias
     assert re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "srx:c:ab12cd34")
-    assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "srx:c:xyz")
-    assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "srx:c:ab12cd345")
+    assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "search:cancel:xyz")
     assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "song:dl:0")
 
 
@@ -388,7 +411,7 @@ async def test_run_search_status_up_before_result(monkeypatch):
     seq, _event = context.user_data[search.CANCEL_KEY]
     assert (
         status_kw["reply_markup"].inline_keyboard[0][0].callback_data
-        == f"srx:c:{seq}"
+        == f"search:cancel:{seq}"
     )
 
     release.set()
@@ -399,7 +422,7 @@ async def test_run_search_status_up_before_result(monkeypatch):
 
 
 async def test_run_search_cancelled(monkeypatch):
-    """Cancelling mid-search stops the wait: no cards, a clean
+    """Cancelling mid-search stops the wait: no card, a clean
     'cancelled' message, status removed."""
     release = asyncio.Event()
 
@@ -416,14 +439,15 @@ async def test_run_search_cancelled(monkeypatch):
     seq, _event = context.user_data[search.CANCEL_KEY]
 
     # the user taps Cancel on the status message
-    await search.on_search_cancel(make_callback(f"srx:c:{seq}"), context)
+    await search.on_search_cancel(make_callback(f"search:cancel:{seq}"), context)
 
     # the cancel wins the race — the search is still pending here
     await task
     release.set()  # release the (already cancelled) search's wait — hygiene
 
     context.bot.send_photo.assert_not_awaited()
-    assert search.CANDIDATES_KEY not in context.user_data
+    # a cancelled search stores no result set
+    assert len(get_token_store(context, search.RESULTS_STORE)) == 0
     text = update.message.reply_text.await_args.args[0]
     assert "cancelled" in text.lower()
     context.status_message.delete.assert_awaited_once()
@@ -442,12 +466,13 @@ async def test_on_search_cancel_stale_seq_toast(monkeypatch):
     _seq, event = context.user_data[search.CANCEL_KEY]
     assert not event.is_set()
 
-    stale = make_callback("srx:c:ffffffff")
+    stale = make_callback("search:cancel:ffffffff")
     await search.on_search_cancel(stale, context)
 
     assert not event.is_set()  # the live search is untouched
     assert (
-        stale.callback_query.answer.await_args.args[0] == STALE_SEARCH_CANCEL
+        stale.callback_query.answer.await_args.args[0]
+        == copy.TOAST_SEARCH_CANCEL_STALE
     )
 
 
@@ -456,7 +481,7 @@ async def test_on_search_cancel_fresh_seq_sets_event():
     context = make_context()
     context.user_data[search.CANCEL_KEY] = ("ab12cd34", event)
 
-    cb_update = make_callback("srx:c:ab12cd34")
+    cb_update = make_callback("search:cancel:ab12cd34")
     await search.on_search_cancel(cb_update, context)
 
     assert event.is_set()
@@ -464,92 +489,245 @@ async def test_on_search_cancel_fresh_seq_sets_event():
     assert cb_update.callback_query.answer.await_args.args == ()
 
 
-# --- track_keyboard ----------------------------------------------------------------
-
-def test_track_keyboard_buttons():
-    kb = keyboards.track_keyboard(2, "https://open.spotify.com/track/xyz")
-    rows = kb.inline_keyboard
-    assert len(rows) == 2
-    assert rows[0][0].text == "⬇️ Download MP3"
-    assert rows[0][0].callback_data == "song:dl:2"
-    assert rows[0][1].text == "🎧 30s Preview"
-    assert rows[0][1].callback_data == "song:prev:2"
-    assert rows[1][0].text == "📄 Lyrics"
-    assert rows[1][0].callback_data == "song:lyr:2"
-    assert rows[1][1].text == "🔗 Open on Spotify"
-    assert rows[1][1].url == "https://open.spotify.com/track/xyz"
-    assert rows[1][1].callback_data is None
-
+# --- track card payload patterns ------------------------------------------------------
 
 def test_song_action_pattern():
-    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:dl:0")
-    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:lyr:12")
-    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:prev:3")
-    assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "song:dl:x")
+    # tokenized payloads: 8-hex token, optional 1-based index
+    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:dl:ab12cd34:1")
+    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:prev:ab12cd34")
+    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:prevcard:ab12cd34:2")
+    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:next:ab12cd34:3")
+    assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "song:dl:0")  # legacy
+    assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "song:lyr:12")
     assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "yt:fmt:720")
     assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "nav:music")
+    # legacy payloads match only the legacy pattern
+    assert re.match(SONG_ACTION_LEGACY_PATTERN, "song:dl:0")
+    assert re.match(SONG_ACTION_LEGACY_PATTERN, "song:lyr:12")
+    assert not re.match(SONG_ACTION_LEGACY_PATTERN, "song:dl:ab12cd34:1")
 
 
-# --- on_song_action callbacks -------------------------------------------------------
+# --- on_song_action callbacks (spec §5.3, §5.6) ---------------------------------------
 
-async def test_song_dl_downloads_candidate(monkeypatch):
+async def test_song_dl_downloads_the_named_match(monkeypatch):
     mock = AsyncMock()
     monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
     tracks = [fake_track(0), fake_track(1)]
-    update = make_callback("song:dl:1")
     context = make_context()
-    context.user_data[search.CANDIDATES_KEY] = tracks
+    token = store_tracks(context, tracks)
 
+    update = make_callback(f"song:dl:{token}:2")
     await search.on_song_action(update, context)
 
     mock.assert_awaited_once()
-    # the core download core receives (update, context, spotify_url)
+    # the download core receives (update, context, spotify_url)
     assert mock.await_args.args[2] == tracks[1].spotify_url
     update.callback_query.answer.assert_awaited_once()
 
 
-async def test_song_lyr_is_coming_soon(monkeypatch):
+async def test_song_dl_inline_token_without_index(monkeypatch):
+    """Shared inline card: the token names the single track itself, so
+    any user may tap it in any chat (spec §5.6)."""
     mock = AsyncMock()
     monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
-    update = make_callback("song:lyr:0")
+    track = fake_track(7)
     context = make_context()
-    context.user_data[search.CANDIDATES_KEY] = [fake_track(0)]
+    token = store_tracks(context, [track])
 
+    await search.on_song_action(make_callback(f"song:dl:{token}"), context)
+
+    mock.assert_awaited_once()
+    assert mock.await_args.args[2] == track.spotify_url
+
+
+async def test_song_action_stale_token_toasts_and_runs_nothing(monkeypatch):
+    mock = AsyncMock()
+    monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
+    context = make_context()  # nothing in the store (restart / expired)
+
+    update = make_callback("song:dl:deadbeef:1")
     await search.on_song_action(update, context)
 
     mock.assert_not_awaited()
-    assert update.callback_query.answer.await_args.args[0] == COMMING_SOON
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_SEARCH_STALE
+    )
 
 
-async def test_song_action_stale_index_answers_expired(monkeypatch):
+async def test_song_action_out_of_range_index_toasts(monkeypatch):
     mock = AsyncMock()
     monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
-    update = make_callback("song:dl:5")
     context = make_context()
-    context.user_data[search.CANDIDATES_KEY] = [fake_track(0)]
+    token = store_tracks(context, [fake_track(0)])
 
+    update = make_callback(f"song:dl:{token}:9")
     await search.on_song_action(update, context)
 
     mock.assert_not_awaited()
-    assert update.callback_query.answer.await_args.args[0] == SONG_EXPIRED
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_SEARCH_STALE
+    )
 
 
-async def test_song_action_without_candidates_answers_expired(monkeypatch):
+async def test_song_action_expired_token_toasts(monkeypatch):
+    """TTL passed (300 s): the token resolves to None -> stale toast,
+    never the user's latest results (spec §5.3, §16)."""
     mock = AsyncMock()
     monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
-    update = make_callback("song:dl:0")
-    context = make_context()  # no candidates at all (restart / never searched)
+    context = make_context()
+    token = store_tracks(context, [fake_track(0)], ttl=-1)  # already expired
 
+    update = make_callback(f"song:dl:{token}:1")
     await search.on_song_action(update, context)
 
     mock.assert_not_awaited()
-    assert update.callback_query.answer.await_args.args[0] == SONG_EXPIRED
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_SEARCH_STALE
+    )
+
+
+async def test_legacy_song_payload_toasts(monkeypatch):
+    """Pre-token rollout buttons (index only) are unresolvable by design:
+    toast, never the most-recent-results fallback (spec §16)."""
+    mock = AsyncMock()
+    monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
+    context = make_context()
+    # even with a fresh result set in the store, the legacy payload
+    # cannot be tied to it
+    store_tracks(context, [fake_track(0)], query="fresh")
+
+    for payload in ("song:dl:0", "song:lyr:1", "song:prev:2"):
+        update = make_callback(payload)
+        await search.on_song_action_legacy(update, context)
+        assert (
+            update.callback_query.answer.await_args.args[0]
+            == copy.TOAST_SEARCH_STALE
+        )
+    mock.assert_not_awaited()
+
+
+# --- carousel: prevcard/next edit the one card (spec §5.3) ---------------------------
+
+async def test_song_next_edits_card_to_next_match():
+    tracks = [fake_track(0), fake_track(1)]
+    context = make_context()
+    token = store_tracks(context, tracks)
+    card_message = MagicMock(chat_id=7, message_id=600, photo=[MagicMock()])
+
+    update = make_callback(f"song:next:{token}:1", message=card_message)
+    await search.on_song_action(update, context)
+
+    # edited in place — no new message, no toast
+    context.bot.send_message.assert_not_awaited()
+    update.callback_query.answer.assert_not_awaited()
+    mm = context.bot.edit_message_media
+    mm.assert_awaited_once()
+    kw = mm.await_args.kwargs
+    assert kw["media"].media == tracks[1].cover_url
+    assert "<b>Title 1</b>" in kw["media"].caption
+    assert "Match 2 of 2" in kw["media"].caption
+    flat = [b.callback_data for b in _buttons(kw["reply_markup"]) if b.callback_data]
+    assert f"song:dl:{token}:2" in flat
+    assert f"song:next:{token}:2" in flat
+
+
+async def test_song_prevcard_at_first_toasts():
+    context = make_context()
+    token = store_tracks(context, [fake_track(0), fake_track(1)])
+
+    update = make_callback(f"song:prevcard:{token}:1")
+    await search.on_song_action(update, context)
+
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_TRACK_FIRST
+    )
+    context.bot.edit_message_media.assert_not_awaited()
+    context.bot.edit_message_text.assert_not_awaited()
+
+
+async def test_song_next_at_last_toasts():
+    context = make_context()
+    token = store_tracks(context, [fake_track(0), fake_track(1)])
+
+    update = make_callback(f"song:next:{token}:2")
+    await search.on_song_action(update, context)
+
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_TRACK_LAST
+    )
+    context.bot.edit_message_media.assert_not_awaited()
+
+
+async def test_song_next_to_match_without_cover_edits_text():
+    """Next match has no cover: the same message is edited to the text
+    card (spec §5.3 fallback)."""
+    tracks = [fake_track(0), fake_track(1, cover_url=None)]
+    context = make_context()
+    token = store_tracks(context, tracks)
+
+    await search.on_song_action(make_callback(f"song:next:{token}:1"), context)
+
+    context.bot.edit_message_media.assert_not_awaited()
+    kw = context.bot.edit_message_text.await_args.kwargs
+    assert "<b>Title 1</b>" in kw["text"]
+    assert "Match 2 of 2" in kw["text"]
+
+
+async def test_song_next_media_edit_failure_falls_back_to_text():
+    tracks = [fake_track(0), fake_track(1)]
+    context = make_context()
+    token = store_tracks(context, tracks)
+    context.bot.edit_message_media = AsyncMock(
+        side_effect=BadRequest("message can't be edited")
+    )
+
+    await search.on_song_action(make_callback(f"song:next:{token}:1"), context)
+
+    kw = context.bot.edit_message_text.await_args.kwargs
+    assert "<b>Title 1</b>" in kw["text"]
+
+
+# --- search again ----------------------------------------------------------------------
+
+async def test_search_again_reruns_the_same_query(monkeypatch):
+    run = AsyncMock()
+    monkeypatch.setattr(search, "run_search", run)
+    context = make_context()
+    token = store_tracks(context, [fake_track(0)], query="Daft Punk Get Lucky")
+
+    update = make_callback(f"search:again:{token}")
+    await search.on_search_again(update, context)
+
+    run.assert_awaited_once()
+    assert run.await_args.args[2] == "Daft Punk Get Lucky"
+    # plain answer: the new search sends its own status immediately
+    assert update.callback_query.answer.await_args.args == ()
+
+
+async def test_search_again_stale_token_toasts(monkeypatch):
+    run = AsyncMock()
+    monkeypatch.setattr(search, "run_search", run)
+    context = make_context()
+
+    update = make_callback("search:again:deadbeef")
+    await search.on_search_again(update, context)
+
+    run.assert_not_awaited()
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_SEARCH_STALE
+    )
 
 
 # --- state wiring: plain text -> search ---------------------------------------------
 
-async def test_music_state_handler_searches(monkeypatch):
-    """MUSIC_STATE TEXT entry: the typed text becomes the search query."""
+async def test_search_input_handler_searches(monkeypatch):
+    """SEARCH_INPUT_STATE TEXT entry: the typed text becomes the query."""
     mock = AsyncMock(return_value=[fake_track(0)])
     monkeypatch.setattr(search, "search_tracks", mock)
     update = make_update("  starboy  ")
@@ -557,13 +735,13 @@ async def test_music_state_handler_searches(monkeypatch):
 
     state = await search.handler(update, context)
 
-    assert state == MUSIC_STATE
+    assert state == SEARCH_INPUT_STATE
     assert mock.await_args.args[0] == "starboy"
 
 
-async def test_spotify_state_plain_text_searches(monkeypatch):
-    """MUSIC_SPOTIFY_STATE: spotify_download.handler's non-URL branch now
-    runs the search instead of going silent (plan 1.2)."""
+async def test_search_input_plain_text_searches(monkeypatch):
+    """The shared Search Music entry (spotify_download.handler): non-URL
+    text runs the search."""
     mock = AsyncMock()
     monkeypatch.setattr(search, "run_search", mock)
     update = make_update("starboy")
@@ -571,12 +749,12 @@ async def test_spotify_state_plain_text_searches(monkeypatch):
 
     state = await spotify_download.handler(update, context)
 
-    assert state == MUSIC_SPOTIFY_STATE
+    assert state == SEARCH_INPUT_STATE
     mock.assert_awaited_once()
     assert mock.await_args.args[2] == "starboy"
 
 
-async def test_spotify_state_url_still_downloads(monkeypatch):
+async def test_search_input_url_still_downloads(monkeypatch):
     dl = AsyncMock()
     monkeypatch.setattr(spotify_download, "run_spotify_download", dl)
     monkeypatch.setattr(search, "run_search", AsyncMock())
@@ -586,7 +764,7 @@ async def test_spotify_state_url_still_downloads(monkeypatch):
 
     state = await spotify_download.handler(update, context)
 
-    assert state == MUSIC_SPOTIFY_STATE
+    assert state == SEARCH_INPUT_STATE
     dl.assert_awaited_once()
     assert dl.await_args.args[2] == "https://open.spotify.com/track/xyz"
     search.run_search.assert_not_awaited()

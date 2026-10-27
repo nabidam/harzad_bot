@@ -15,6 +15,7 @@ import pytest
 from connectors.db import SessionLocal
 from models.log import Log
 from models.user import User
+from utils.constants.states import HOME_STATE, SEARCH_INPUT_STATE
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SMALL_MP4 = FIXTURES / "small.mp4"
@@ -282,8 +283,11 @@ class TestSpotify:
         update = make_update("Back 🔙", test_tg)
         context = make_context()
         result = await self.m.handler(update, context)
-        assert result == self.m.START_STATE
-        update.message.reply_text.assert_awaited_once()
+        # typed Back -> fresh Home (user's own message can't be edited,
+        # so go_home sends a new message), input mode is preserved
+        assert result == SEARCH_INPUT_STATE
+        context.bot.send_message.assert_awaited_once()
+        update.message.reply_text.assert_not_awaited()
 
     async def test_non_url_skips_download(self, test_tg, monkeypatch):
         from bot.handlers.music.spotify import search as spotify_search
@@ -292,7 +296,7 @@ class TestSpotify:
         update = make_update("just a search term", test_tg)
         context = make_context()
         result = await self.m.handler(update, context)
-        assert result == self.m.MUSIC_SPOTIFY_STATE
+        assert result == SEARCH_INPUT_STATE
         # plain text goes to the live search flow, never the downloader
         run_search.assert_awaited_once()
         assert run_search.await_args.args[2] == "just a search term"
@@ -346,7 +350,7 @@ class TestSpotify:
         # handler would see an empty mock and skip the whole download loop
         context.application.bot_data = {"spotdl_instance": fake}
         result = await self.m.handler(update, context)
-        assert result == self.m.MUSIC_SPOTIFY_STATE
+        assert result == SEARCH_INPUT_STATE
         # regression: the download must go through the async api
         assert fake.sync_download_calls == 0
         sa = context.bot.send_audio
@@ -408,7 +412,7 @@ class TestSpotify:
         context = make_context()
         context.application.bot_data = {"spotdl_instance": FakeSpotdl()}
         result = await self.m.handler(update, context)
-        assert result == self.m.MUSIC_SPOTIFY_STATE
+        assert result == SEARCH_INPUT_STATE
         # the download coroutine ran on the handler's own (running) loop —
         # not in a worker thread with its own run_until_complete
         assert loops, "downloader.pool_download was never awaited"

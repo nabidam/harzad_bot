@@ -8,7 +8,8 @@ import pytest
 import connectors.preview as preview
 import bot.handlers.music.spotify.search as search
 import requests
-from utils.constants.messages import NO_PREVIEW
+from utils import copy
+from utils.tokens import get_token_store
 
 
 def _fresh_tg_id() -> int:
@@ -29,10 +30,17 @@ def make_callback(data):
 def make_context():
     context = MagicMock()
     context.user_data = {}
+    context.application.bot_data = {}
     context.bot = MagicMock()
     for m in ("send_message", "send_chat_action", "send_audio", "send_photo"):
         setattr(context.bot, m, AsyncMock())
     return context
+
+
+def store_tracks(context, tracks):
+    return get_token_store(context, search.RESULTS_STORE).put(
+        {"query": "q", "tracks": tracks}, search.RESULTS_TTL_SECONDS
+    )
 
 
 def fake_track(**kw):
@@ -230,10 +238,10 @@ async def test_prev_uses_track_preview_url_when_present(monkeypatch):
     mock = AsyncMock(return_value="https://should-not-be-used.mp3")
     monkeypatch.setattr(search, "resolve_preview_url", mock)
     track = fake_track(preview_url="https://spotify-preview/x.mp3")
-    update = make_callback("song:prev:0")
     context = make_context()
-    context.user_data[search.CANDIDATES_KEY] = [track]
+    token = store_tracks(context, [track])
 
+    update = make_callback(f"song:prev:{token}:1")
     await search.on_song_action(update, context)
 
     mock.assert_not_awaited()
@@ -245,14 +253,31 @@ async def test_prev_uses_track_preview_url_when_present(monkeypatch):
     update.callback_query.answer.assert_awaited_once()
 
 
+async def test_prev_inline_token_without_index(monkeypatch):
+    """Shared inline card: no index in the payload — the token names the
+    single track (spec §5.6)."""
+    mock = AsyncMock(return_value="https://itunes/x.mp3")
+    monkeypatch.setattr(search, "resolve_preview_url", mock)
+    track = fake_track(preview_url=None)
+    context = make_context()
+    token = store_tracks(context, [track])
+
+    update = make_callback(f"song:prev:{token}")
+    await search.on_song_action(update, context)
+
+    mock.assert_awaited_once_with("Starboy", "The Weeknd, Daft Punk")
+    kw = context.bot.send_audio.await_args.kwargs
+    assert kw["audio"] == "https://itunes/x.mp3"
+
+
 async def test_prev_resolves_from_itunes_when_spotify_url_missing(monkeypatch):
     mock = AsyncMock(return_value="https://itunes/x.mp3")
     monkeypatch.setattr(search, "resolve_preview_url", mock)
     track = fake_track(preview_url=None)
-    update = make_callback("song:prev:0")
     context = make_context()
-    context.user_data[search.CANDIDATES_KEY] = [track]
+    token = store_tracks(context, [track])
 
+    update = make_callback(f"song:prev:{token}:1")
     await search.on_song_action(update, context)
 
     mock.assert_awaited_once_with("Starboy", "The Weeknd, Daft Punk")
@@ -264,14 +289,17 @@ async def test_prev_unavailable_answers_no_preview(monkeypatch):
     mock = AsyncMock(return_value=None)
     monkeypatch.setattr(search, "resolve_preview_url", mock)
     track = fake_track(preview_url=None)
-    update = make_callback("song:prev:0")
     context = make_context()
-    context.user_data[search.CANDIDATES_KEY] = [track]
+    token = store_tracks(context, [track])
 
+    update = make_callback(f"song:prev:{token}:1")
     await search.on_song_action(update, context)
 
     context.bot.send_audio.assert_not_awaited()
-    assert update.callback_query.answer.await_args.args[0] == NO_PREVIEW
+    assert (
+        update.callback_query.answer.await_args.args[0]
+        == copy.TOAST_TRACK_NO_PREVIEW
+    )
 
 
 @pytest.mark.live

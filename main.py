@@ -21,23 +21,16 @@ from telegram.ext import (
 )
 from PIL import Image
 from bot.conversations.main import main_conversation_handler
-from bot.handlers import dispatch
+from bot.handlers import callbacks, dispatch
 from bot.handlers import inline as inline_query
-from bot.handlers.music.spotify import search as spotify_search
-from bot.navigation import NAVIGATOR, navigate
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
-from utils.constants.keyboards import (
-    SEARCH_CANCEL_CALLBACK_PATTERN,
-    SONG_ACTION_CALLBACK_PATTERN,
-    YT_FMT_CALLBACK_PATTERN,
-)
-from utils.constants.messages import SOMETHING_WENT_WRONG
+from utils import copy, keyboards
 from web.app import start_server
 
 import configurations.settings as settings
 from connectors.spotdl import create_spotdl_instance
 from utils.custom_context import MyContext
-from utils.helpers import create_requirement_folders, react_message
+from utils.helpers import create_requirement_folders
 from utils.logger import init_logger
 from utils import storage
 from spotdl import SpotifyClient, Spotdl
@@ -57,15 +50,15 @@ async def post_init(application: Application):
     """
     bot = application.bot
     try:
+        # Commands and profile copy per the redesign spec §13.3.
         await bot.set_my_commands([
-            BotCommand(command="start", description="Open the menu"),
-            BotCommand(command="help", description="How to use the bot"),
+            BotCommand(command="start", description="Open Home"),
+            BotCommand(command="help", description="How to use Harzad"),
+            BotCommand(command="tasks", description="View active tasks"),
+            BotCommand(command="cancel", description="Cancel a running task"),
         ])
-        await bot.set_my_description(
-            "Harzad downloads media from Instagram, Spotify, Pinterest and YouTube, "
-            "and can chat or generate images with AI. Send /start to begin."
-        )
-        await bot.set_my_short_description("Media downloader + AI 🎧🎞🤖")
+        await bot.set_my_description(copy.BOT_DESCRIPTION)
+        await bot.set_my_short_description(copy.BOT_SHORT_DESCRIPTION)
     except Exception:
         logger.warning(
             "post_init: profile setup failed; retried on next boot", exc_info=True
@@ -144,15 +137,12 @@ async def handle_stray_callback(update: Update, context: ContextTypes.DEFAULT_TY
     Inline buttons stay clickable forever after they are sent. A user
     who never sent /start (e.g. they only used the universal link
     dispatcher) has no conversation state, so the group-0 conversation
-    handler ignores their clicks. For nav buttons we run the shared
-    navigator — that drops them into the menu with no /start; anything
-    else is just answered so the client's button spinner doesn't hang.
+    handler ignores their clicks. The shared chain's patternless
+    navigator already answers every callback it doesn't recognize, so
+    this is a last-resort safety net: answer and move on.
     """
     cq = update.callback_query
     if cq is None:
-        return
-    if (cq.data or "") in NAVIGATOR:
-        await navigate(update, context)
         return
     await cq.answer()
 
@@ -175,8 +165,15 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Unhandled exception %s", where, exc_info=context.error)
     if isinstance(update, Update) and update.effective_message is not None:
         try:
-            await react_message(update, context.bot, "👎")
-            await update.effective_message.reply_text(SOMETHING_WENT_WRONG)
+            # Spec §7: the unexpected-error class is a service-side
+            # fallback — no blame, no misleading reaction, a Home exit.
+            # No Retry button: an unhandled exception has no safe replay
+            # payload (spec §7.3).
+            await update.effective_message.reply_text(
+                copy.ERROR_UNEXPECTED,
+                parse_mode="HTML",
+                reply_markup=keyboards.home_keyboard,
+            )
         except Exception:
             logger.debug("Could not notify the user about the error", exc_info=True)
 
@@ -237,7 +234,8 @@ def _group1_guard(conv):
 
 
 def register_handlers(application: Application) -> None:
-    """All handler registration, in group order (plan 1.1 wiring).
+    """All handler registration, in group order (plan 1.1 wiring,
+    redesign §16).
 
     Kept in a function so tests can build a real Application and verify
     the tree without booting the bot.
@@ -253,25 +251,14 @@ def register_handlers(application: Application) -> None:
     # Every handler below is guard-wrapped: when the user DOES have an
     # active conversation, the group-0 conversation's own copy of the
     # handler owns the update (PTB still evaluates group 1 — see
-    # _group1_guard).
+    # _group1_guard). The shared callback chain (patterns preserved)
+    # covers the tokenized actions, the navigator and the stateless
+    # catch-all in one ordered list.
     application.add_handler(
         MessageHandler(dispatch.MediaUrlFilter(), guard(dispatch.handle_link)), group=1
     )
-    application.add_handler(
-        CallbackQueryHandler(guard(dispatch.on_yt_format), pattern=YT_FMT_CALLBACK_PATTERN), group=1
-    )
-    # Song-card buttons (plan 1.2): a user who searched from the menu can
-    # click a card after leaving the conversation — the catch-all below
-    # must not swallow them.
-    application.add_handler(
-        CallbackQueryHandler(guard(spotify_search.on_song_action), pattern=SONG_ACTION_CALLBACK_PATTERN), group=1
-    )
-    # Live-search Cancel button (2026-10-27 UX): the status message is
-    # sent from the conversation, but a user without one (group-1
-    # dispatcher entry) also gets a status with a Cancel button.
-    application.add_handler(
-        CallbackQueryHandler(guard(spotify_search.on_search_cancel), pattern=SEARCH_CANCEL_CALLBACK_PATTERN), group=1
-    )
+    for handler in callbacks.shared_callback_handlers(guard):
+        application.add_handler(handler, group=1)
     application.add_handler(CallbackQueryHandler(guard(handle_stray_callback)), group=1)
     application.add_error_handler(on_error)
 

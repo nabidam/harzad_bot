@@ -8,14 +8,15 @@ from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
 from utils.constants.keyboards import BACK_KEYBOARD
 from utils.constants.messages import GETTING_MEDIA_INFORMATION, PROCESSING, SPOTIFY_DOWNLOAD_PROGRESS, TASK_DONE
-from utils.constants.states import MUSIC_SPOTIFY_STATE, START_STATE
+from utils.constants.states import SEARCH_INPUT_STATE
 from configurations.settings import DOWNLOAD_MP3_PATH
 
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
-from utils import keyboards
+from utils import copy, keyboards
 from utils.helpers import react_message
 from utils.storage import cleanup_media
+from bot.handlers import common
 from spotdl import Spotdl
 
 
@@ -117,27 +118,31 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
 @sync_user
 @log_message
 async def handler(update: Update, context: MyContext):
-    assert update.message is not None
-    message = update.message.text
-    print(message)
-    if message == BACK_KEYBOARD:
-        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
-        return START_STATE
+    """TEXT entry for the Search Music input screen (spec §2.2, §6.1).
 
-    assert message is not None
-    message_is_url = validators.url(message) # type: ignore
+    A Spotify URL works here too (legacy entry): the universal
+    dispatcher runs first for media links, so the URL branch below is a
+    safety net. Plain text is a song query.
+    """
+    assert update.message is not None
+    text = (update.message.text or "").strip()
+
+    if await common.precheck(update, context):
+        return SEARCH_INPUT_STATE
+
+    message_is_url = bool(text) and bool(validators.url(text)) # type: ignore
 
     assert update.effective_chat is not None
     assert update.effective_message is not None
     assert update.effective_user is not None
 
     if message_is_url:
-        await run_spotify_download(update, context, message)
+        await run_spotify_download(update, context, text)
     else:
-        # Plain text in the Spotify state is a song query (plan 1.2).
+        # Plain text in Search Music is a song query (plan 1.2).
         # Lazy import: search.py imports this module at top level for the
         # card's Download button — a top-level import here would cycle.
         from bot.handlers.music.spotify import search as spotify_search
-        await spotify_search.run_search(update, context, message)
+        await spotify_search.run_search(update, context, text)
 
-    return MUSIC_SPOTIFY_STATE
+    return SEARCH_INPUT_STATE

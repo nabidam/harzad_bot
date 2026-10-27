@@ -1,5 +1,5 @@
-"""#20 inline query mode (plan 1.3) — @harzad_bot <song> articles,
-caching, candidate stashing, wiring."""
+"""#20 inline query mode (redesign §5.6) — @harzad_bot <song> articles,
+group-safe track tokens, help/failure cards, wiring."""
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -8,7 +8,8 @@ import pytest
 import bot.handlers.inline as inline
 import connectors.spotify_search as spotify_search
 from telegram import InputTextMessageContent
-from utils import keyboards
+from utils import copy
+from utils.tokens import get_token_store
 
 
 def _fresh_tg_id() -> int:
@@ -30,6 +31,7 @@ def make_inline_update(query):
 def make_context():
     context = MagicMock()
     context.user_data = {}
+    context.application.bot_data = {}
     return context
 
 
@@ -54,6 +56,10 @@ def _clear_search_cache():
     spotify_search._cache.clear()
 
 
+def _buttons(markup):
+    return [b for row in markup.inline_keyboard for b in row]
+
+
 async def test_inline_query_answers_articles(monkeypatch):
     tracks = [fake_track(i) for i in range(3)]
     monkeypatch.setattr(inline, "search_tracks", AsyncMock(return_value=tracks))
@@ -66,11 +72,12 @@ async def test_inline_query_answers_articles(monkeypatch):
     args, kwargs = update.inline_query.answer.await_args
     results = args[0]
     assert len(results) == 3
-    # plan 5.3: results cached 300s
+    # results cached 300s at the API level
     assert kwargs["cache_time"] == spotify_search.CACHE_TTL_SECONDS == 300
 
     first = results[0]
-    assert first.id == "0"
+    # the article id is the track's own token
+    assert first.id == results[0].reply_markup.inline_keyboard[0][0].callback_data.split(":")[2]
     assert first.title == "Title 0"
     assert "Artist 0" in first.description
     assert "Album 0" in first.description
@@ -79,15 +86,26 @@ async def test_inline_query_answers_articles(monkeypatch):
     assert isinstance(content, InputTextMessageContent)
     assert "<b>Title 0</b>" in content.message_text
     assert content.parse_mode == "HTML"
-    # same card buttons as the in-chat search (plan 1.2)
-    buttons = [b for row in first.reply_markup.inline_keyboard for b in row]
-    assert buttons[0].callback_data == "song:dl:0"
-    assert buttons[1].callback_data == "song:prev:0"
-    # candidates stashed so the delivered card's buttons resolve
-    assert context.user_data[inline.CANDIDATES_KEY] == tracks
+
+    # group-safe card buttons (spec §5.6): token only, no index,
+    # "Send MP3 here" label, no carousel row
+    buttons = _buttons(first.reply_markup)
+    assert buttons[0].callback_data == f"song:dl:{first.id}"
+    assert buttons[0].text == copy.BTN_TRACK_DOWNLOAD_INLINE
+    assert buttons[1].callback_data == f"song:prev:{first.id}"
+    flat = [b.callback_data for b in buttons if b.callback_data]
+    assert not any("prevcard" in cb or "next" in cb for cb in flat)
+
+    # each article carries its own immutable single-track token in the
+    # shared store: the delivered card resolves for ANY user who taps it
+    store = get_token_store(context, inline.spotify_search.RESULTS_STORE)
+    entry = store.get(first.id)
+    assert entry is not None
+    assert entry["tracks"] == [tracks[0]]
+    assert len(store) == 3  # one token per article
 
 
-async def test_inline_query_short_query_answers_empty(monkeypatch):
+async def test_inline_query_short_query_answers_help_card(monkeypatch):
     mock = AsyncMock()
     monkeypatch.setattr(inline, "search_tracks", mock)
     update = make_inline_update("s")
@@ -96,31 +114,42 @@ async def test_inline_query_short_query_answers_empty(monkeypatch):
     await inline.handler(update, context)
 
     mock.assert_not_awaited()
-    assert update.inline_query.answer.await_args.args[0] == []
+    results = update.inline_query.answer.await_args.args[0]
+    assert len(results) == 1
+    assert results[0].title == copy.INLINE_MIN_QUERY_TITLE
+    assert results[0].description == copy.INLINE_MIN_QUERY_DESC
+    assert results[0].reply_markup is None
 
 
-async def test_inline_query_empty_query_answers_empty(monkeypatch):
+@pytest.mark.parametrize("query", ["", "   "])
+async def test_inline_query_empty_query_answers_help_card(monkeypatch, query):
     mock = AsyncMock()
     monkeypatch.setattr(inline, "search_tracks", mock)
-    for query in ("", "   "):
-        update = make_inline_update(query)
-        await inline.handler(update, make_context())
-        assert update.inline_query.answer.await_args.args[0] == []
+    update = make_inline_update(query)
+    context = make_context()
+
+    await inline.handler(update, context)
+
     mock.assert_not_awaited()
+    results = update.inline_query.answer.await_args.args[0]
+    assert len(results) == 1
+    assert results[0].title == copy.INLINE_MIN_QUERY_TITLE
 
 
-async def test_inline_query_no_results_answers_empty(monkeypatch):
+async def test_inline_query_no_results_answers_explanation_card(monkeypatch):
     monkeypatch.setattr(inline, "search_tracks", AsyncMock(return_value=[]))
     update = make_inline_update("zzz qqq")
     context = make_context()
 
     await inline.handler(update, context)
 
-    assert update.inline_query.answer.await_args.args[0] == []
-    assert inline.CANDIDATES_KEY not in context.user_data
+    results = update.inline_query.answer.await_args.args[0]
+    assert len(results) == 1
+    assert results[0].title == "No matches"
+    assert "zzz qqq" in results[0].input_message_content.message_text
 
 
-async def test_inline_query_search_failure_answers_empty(monkeypatch):
+async def test_inline_query_search_failure_answers_error_card(monkeypatch):
     monkeypatch.setattr(
         inline, "search_tracks", AsyncMock(side_effect=RuntimeError("proxy"))
     )
@@ -128,7 +157,10 @@ async def test_inline_query_search_failure_answers_empty(monkeypatch):
 
     await inline.handler(update, make_context())  # must not raise
 
-    assert update.inline_query.answer.await_args.args[0] == []
+    results = update.inline_query.answer.await_args.args[0]
+    assert len(results) == 1
+    assert results[0].title == "Search failed"
+    assert copy.SEARCH_FAILED in results[0].input_message_content.message_text
 
 
 def test_article_fields_are_capped():
@@ -138,13 +170,13 @@ def test_article_fields_are_capped():
         artist="A" * 300,
         album="B" * 300,
     )
-    article = inline._to_article(0, track)
+    article = inline._to_article(track, "ab12cd34")
     assert len(article.title) == 64
     assert len(article.description) == 256
 
 
 def test_article_description_omits_empty_album():
     track = fake_track(0, album="")
-    article = inline._to_article(0, track)
+    article = inline._to_article(track, "ab12cd34")
     assert article.description == "Artist 0"
     assert "•" not in article.description

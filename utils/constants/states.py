@@ -1,18 +1,32 @@
-(   START_STATE,
+"""Conversation states (UX redesign §2.5).
 
-    INSTAGRAM_STATE,
-    INSTAGRAM_DOWNLOAD_STATE,
+States are an input-routing detail, not a visible concept: each names the
+"input mode" — what plain text means right now. The redesign collapses the
+old five-button tree into six logical modes; there is no submenu hop
+between a platform and its input screen.
 
-    MUSIC_STATE,
-    MUSIC_SPOTIFY_STATE,
+Compatibility aliases keep the pre-redesign names importable during
+rollout (handlers, tests and persisted in-memory states may still use them).
+"""
 
-    PINTEREST_STATE,
+HOME_STATE = 0
+SEARCH_INPUT_STATE = 1
+INSTAGRAM_INPUT_STATE = 2
+YOUTUBE_INPUT_STATE = 3
+PINTEREST_INPUT_STATE = 4
+AI_CHAT_STATE = 5
 
-    YOUTUBE_STATE,
-    YOUTUBE_DOWNLOAD_STATE,
-    YOUTUBE_MP3_STATE,
-    
-    AI_STATE,
-    AI_CHAT_STATE,
-    AI_TTI_STATE
-) = range(12)
+# --- compatibility aliases (legacy state names -> same logical modes) ---
+START_STATE = HOME_STATE
+MUSIC_STATE = SEARCH_INPUT_STATE
+MUSIC_SPOTIFY_STATE = SEARCH_INPUT_STATE
+INSTAGRAM_STATE = INSTAGRAM_INPUT_STATE
+INSTAGRAM_DOWNLOAD_STATE = INSTAGRAM_INPUT_STATE
+YOUTUBE_STATE = YOUTUBE_INPUT_STATE
+YOUTUBE_DOWNLOAD_STATE = YOUTUBE_INPUT_STATE
+YOUTUBE_MP3_STATE = YOUTUBE_INPUT_STATE
+PINTEREST_STATE = PINTEREST_INPUT_STATE
+AI_STATE = AI_CHAT_STATE
+# Legacy TTI state: no longer reachable (dead feature removed, spec §10);
+# the constant stays so old references import cleanly.
+AI_TTI_STATE = 11

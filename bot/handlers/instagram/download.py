@@ -12,6 +12,8 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE
 
 from utils.decorators import send_action,sync_user , log_message
 from utils.exceptions.instagram import LoginException
+from utils import copy
+from bot.handlers import common
 from utils.helpers import escape_html, react_message, send_html_msg, send_image
 from utils import keyboards
 
@@ -361,13 +363,22 @@ async def run_instagram_download(update: Update, context: ContextTypes.DEFAULT_T
 @sync_user
 @log_message
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    assert update.message is not None
-    message = update.message.text
-    assert message is not None
-    print(message)
-    if message == BACK_KEYBOARD:
-        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
-        return INSTAGRAM_STATE
+    """TEXT entry for the Instagram input screen (spec §2.2, §3.1).
 
-    await run_instagram_download(update, context, message)
-    return INSTAGRAM_DOWNLOAD_STATE
+    Supported media links never reach here (the universal dispatcher
+    runs first in every state). `@username` is a profile-picture
+    request ONLY in this input mode; plain non-link text gets the exact
+    input guidance, never a fake downloader error.
+    """
+    assert update.message is not None
+    text = (update.message.text or "").strip()
+
+    if await common.precheck(update, context):
+        return INSTAGRAM_INPUT_STATE
+
+    if text.startswith("@"):
+        await run_instagram_download(update, context, text)
+        return INSTAGRAM_INPUT_STATE
+
+    await common.reprompt(update, context, copy.INSTAGRAM_PROMPT)
+    return INSTAGRAM_INPUT_STATE
