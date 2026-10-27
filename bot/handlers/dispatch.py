@@ -83,7 +83,9 @@ async def handle_link(update: Update, context: MyContext):
     if platform == "tiktok":
         # yt-dlp handles TikTok like any other site. Watermark removal
         # is NOT supported today — never claim it is (spec §6.5).
-        await youtube_download.run_video_download(update, context, url)
+        await youtube_download.run_video_download(
+            update, context, url, kind="tiktok"
+        )
         return None
 
     if platform == "spotify":

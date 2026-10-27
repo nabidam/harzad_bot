@@ -20,11 +20,13 @@ from utils import copy, keyboards
 from utils.constants.keyboards import (
     TASK_CANCEL_CALLBACK_PATTERN,
     TASK_PAGE_CALLBACK_PATTERN,
+    TASK_RETRY_CALLBACK_PATTERN,
 )
 from utils.constants.states import HOME_STATE
 from utils.custom_context import MyContext
 from utils.tasks import (
     ACTIVE_PAGE_SIZE,
+    CANCEL_REQUESTED,
     RECENT_SHOW,
     TaskRegistry,
     get_registry,
@@ -32,6 +34,41 @@ from utils.tasks import (
 
 # Init logger
 logger = getLogger(__name__)
+
+
+# --- Retry (spec §7.3) ------------------------------------------------------
+
+def _retry_players():
+    """kind -> (urls, extra) replay function. Kept as a factory (not a
+    module-level dict) so the flow modules are imported lazily: this
+    module is imported very early in the app build, and the flows pull
+    in the downloaders' dependencies."""
+    from bot.handlers.youtube import download as yt_download
+    from bot.handlers.youtube import mp3 as yt_mp3
+
+    async def play_video(update, context, payload):
+        for url in payload["urls"]:
+            await yt_download.run_video_download(
+                update, context, url,
+                max_height=payload.get("max_height") or 720,
+                kind="youtube_video",
+            )
+
+    async def play_tiktok(update, context, payload):
+        for url in payload["urls"]:
+            await yt_download.run_video_download(
+                update, context, url, kind="tiktok"
+            )
+
+    async def play_mp3(update, context, payload):
+        for url in payload["urls"]:
+            await yt_mp3.run_mp3_download(update, context, url)
+
+    return {
+        "youtube_video": play_video,
+        "tiktok": play_tiktok,
+        "youtube_mp3": play_mp3,
+    }
 
 
 def _active_rows(tasks) -> tuple[str, list[list]]:
@@ -45,7 +82,8 @@ def _active_rows(tasks) -> tuple[str, list[list]]:
     for task in tasks:
         lines.append(task.row())
         from telegram import InlineKeyboardButton
-        button_label = copy.BTN_TASK_CANCEL if task.status != "cancel_requested" else "⏹ Stopping…"
+        button_label = copy.BTN_TASK_CANCEL if task.status != CANCEL_REQUESTED \
+            else copy.BTN_TASK_STOPPING
         rows.append([
             InlineKeyboardButton(
                 button_label,
@@ -162,7 +200,7 @@ def _cancel_task(task, update: Update, context: MyContext) -> None:
     "cancellation requested", never a false "stopped".
     """
     task.cancel_event.set()
-    task.touch(status="cancel_requested")
+    task.touch(status=CANCEL_REQUESTED)
 
 
 async def on_task_cancel(update: Update, context: MyContext):
@@ -190,6 +228,51 @@ async def on_task_cancel(update: Update, context: MyContext):
         return
     await cq.answer()
     _cancel_task(task, update, context)
+
+
+async def on_task_retry(update: Update, context: MyContext):
+    """`task:retry:<token>` — replay a finished task's stored payload
+    (spec §7.2/§7.3): each replayed URL starts a NEW task (new token),
+    so a retry never resurrects or duplicates the original one.
+
+    Stale/foreign/active tokens get the stale toast. A task without a
+    safe-to-replay payload (e.g. the process restarted) gets the
+    restart-expired copy with a fresh entry point — never a guess.
+    """
+    cq = update.callback_query
+    if cq is None:
+        return None
+    match = re.match(TASK_RETRY_CALLBACK_PATTERN, cq.data or "")
+    assert match is not None
+    token = match.group(1)
+
+    registry = get_registry(context)
+    task = registry.get(token)
+    if task is None or task.is_active():
+        await cq.answer(copy.TOAST_TASK_STALE)
+        return
+    assert update.effective_user is not None
+    if task.owner_user_id != update.effective_user.id:
+        await cq.answer(copy.TOAST_TASK_STALE)
+        return
+
+    payload = task.retry_payload
+    player = _retry_players().get(task.kind)
+    if player is None or not payload or not payload.get("urls"):
+        await cq.answer()
+        await cq.message.reply_text(
+            copy.ERROR_RESTART,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.home_tasks_row_keyboard(),
+        )
+        return
+
+    await cq.answer()
+    # Awaiting the replay mirrors on_yt_format: the callback is already
+    # answered (no spinner), and PTB processes other updates
+    # concurrently while this handler coroutine runs the re-download.
+    await player(update, context, payload)
+    return None
 
 
 async def on_tasks_command(update: Update, context: MyContext):
@@ -229,7 +312,7 @@ async def on_cancel_command(update: Update, context: MyContext):
         return None
 
     await update.effective_message.reply_text(
-        "Several tasks are running — pick one below.",
+        copy.TASK_SEVERAL,
         parse_mode=ParseMode.HTML,
     )
     await render_tasks(update, context)

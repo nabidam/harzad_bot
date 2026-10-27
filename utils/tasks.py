@@ -127,6 +127,7 @@ class TaskRegistry:
         input: str,
         cancellable: bool = True,
         title: str | None = None,
+        retry_payload: Any | None = None,
     ) -> Task:
         task = Task(
             token=make_token(),
@@ -134,8 +135,10 @@ class TaskRegistry:
             chat_id=chat_id,
             kind=kind,
             input=input,
+            status=RUNNING,
             cancellable=cancellable,
             title=title,
+            retry_payload=retry_payload,
         )
         self._tasks[task.token] = task
         return task

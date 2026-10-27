@@ -10,7 +10,7 @@ Callback data must stay ≤64 bytes (Bot API hard limit): tokens are 8 hex
 chars, `_button` asserts it so a regression fails at build time, not at
 the first user tap.
 """
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 from utils import copy
 from utils.constants.keyboards import (
@@ -93,10 +93,36 @@ def search_timeout_keyboard(token: str) -> InlineKeyboardMarkup:
     ])
 
 
-def task_cancel_keyboard(token: str) -> InlineKeyboardMarkup:
-    """[⏹ Cancel] [📥 Tasks] on a running task status."""
+def task_cancel_keyboard(token: str, *, cancel_label: str | None = None) -> InlineKeyboardMarkup:
+    """[⏹ Cancel] [📥 Tasks] on a running task status. `cancel_label`
+    lets a flow use its own button copy (YouTube: "⏹ Cancel
+    download", spec §6.3)."""
     return InlineKeyboardMarkup([
-        [_button(copy.BTN_TASK_CANCEL, f"task:cancel:{token}"),
+        [_button(cancel_label or copy.BTN_TASK_CANCEL, f"task:cancel:{token}"),
+         _button(copy.BTN_TASKS, "nav:tasks")],
+    ])
+
+
+def retry_home_keyboard(token: str) -> InlineKeyboardMarkup:
+    """[🔁 Retry] [🏠 Home] for a replayable input error (spec §7.2).
+    Retry re-runs the task's stored payload under a NEW task token
+    (spec §7.3)."""
+    return InlineKeyboardMarkup([
+        [_button(copy.BTN_RETRY, f"task:retry:{token}"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def too_large_keyboard(link: str) -> InlineKeyboardMarkup:
+    """[📋 Copy download link] [🏠 Home] [📥 Tasks] on the >50 MB card
+    (spec §6.3/§6.6). The copy button is a CopyTextButton — it copies
+    the direct link, no callback needed (the link text rides in the
+    copy_text payload, which is why the 64-byte callback budget does
+    not apply to it)."""
+    return InlineKeyboardMarkup([
+        [CopyTextButton(copy.BTN_COPY_LINK,
+                        api_kwargs={"copy_text": {"text": link}}),
+         _button(copy.BTN_HOME, "nav:home"),
          _button(copy.BTN_TASKS, "nav:tasks")],
     ])
 

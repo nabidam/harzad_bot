@@ -236,8 +236,9 @@ async def test_tiktok_link_routes_to_video_download(monkeypatch):
     result = await dispatch.handle_link(update, context)
 
     assert result is None
-    # default quality (720) — the explicit cap arrives with a format click
-    assert calls == [("https://vm.tiktok.com/ZMabc/", {})]
+    # default quality (720), and the task is registered under its own
+    # kind so the Tasks view says TikTok, not YouTube (spec §6.5)
+    assert calls == [("https://vm.tiktok.com/ZMabc/", {"kind": "tiktok"})]
 
 
 # --- YouTube format picker callback (spec §3.2) ----------------------------------

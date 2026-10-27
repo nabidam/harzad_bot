@@ -15,6 +15,13 @@ measured, not simulated. The typing indicator is refreshed every ~4 s:
 a chat action, not a message edit, so it keeps the client's UI alive
 without touching the message.
 
+Two entry points:
+
+- live_status: sends the t=0 accepted message, then keeps it alive;
+  yields the Message.
+- status_ticker: the same ticker for a message that already exists
+  (flows that own the message and edit it at their own phase changes).
+
 Ticker API failures (flaky proxy, user deleted the message) stop the
 ticker quietly — they never break the operation itself. The message is
 left to the caller (edit into the final answer or delete).
@@ -44,22 +51,23 @@ Stage = Tuple[int, Union[str, Callable[[int], str]]]
 
 
 @asynccontextmanager
-async def live_status(bot, chat_id, text, *, reply_markup=None, parse_mode=None,
-                      stages: Sequence[Stage] = (),
-                      tick_seconds: float = TYPING_REFRESH_SECONDS):
-    """Keep a status message alive while the body runs.
+async def status_ticker(
+    bot, chat_id, message_id, *, stages: Sequence[Stage] = (),
+    parse_mode: str | None = None,
+    tick_seconds: float = TYPING_REFRESH_SECONDS,
+):
+    """Keep an EXISTING status message alive (spec §4.2).
 
-    `text` is the t=0 accepted message. `stages` is an ascending list of
-    (at_seconds, replacement); each stage is applied exactly once when
-    the measured elapsed time reaches the threshold.
+    `stages` is an ascending list of (at_seconds, replacement); each
+    stage is applied exactly once when the measured elapsed time
+    reaches the threshold. Elapsed time is measured (monotonic), never
+    simulated. `parse_mode` is applied to stage edits like the initial
+    send (the search stage texts are HTML). The typing indicator is
+    refreshed on its own ~4 s cadence — a chat action, not an edit.
 
-    Yields the sent `Message`. On exit the ticker is stopped and joined;
-    the message itself is left for the caller to finish (edit/delete).
+    Yields nothing; the caller owns the message. Ticker API failures
+    stop the ticker quietly.
     """
-    message = await bot.send_message(
-        chat_id=chat_id, text=text, reply_markup=reply_markup,
-        parse_mode=parse_mode,
-    )
     stop = asyncio.Event()
     started = time.monotonic()
     stages = sorted(stages, key=lambda stage: stage[0])
@@ -97,21 +105,44 @@ async def live_status(bot, chat_id, text, *, reply_markup=None, parse_mode=None,
                     )
                     await bot.edit_message_text(
                         chat_id=chat_id,
-                        message_id=message.message_id,
+                        message_id=message_id,
                         text=new_text,
                         parse_mode=parse_mode,
                     )
                     next_stage += 1
             except TelegramError:
-                logger.debug("live_status: ticker stopped (Bot API error)", exc_info=True)
+                logger.debug("status ticker stopped (Bot API error)", exc_info=True)
                 return
             except Exception:
-                logger.warning("live_status: ticker stopped (unexpected error)", exc_info=True)
+                logger.warning("status ticker stopped (unexpected error)",
+                               exc_info=True)
                 return
 
     task = asyncio.create_task(_ticker())
     try:
-        yield message
+        yield
     finally:
         stop.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@asynccontextmanager
+async def live_status(bot, chat_id, text, *, reply_markup=None, parse_mode=None,
+                      stages: Sequence[Stage] = (),
+                      tick_seconds: float = TYPING_REFRESH_SECONDS):
+    """Send the t=0 accepted message and keep it alive while the body
+    runs.
+
+    `text` is the t=0 accepted message; `stages` as in status_ticker.
+    Yields the sent `Message`. On exit the ticker is stopped and joined;
+    the message itself is left to the caller to finish (edit/delete).
+    """
+    message = await bot.send_message(
+        chat_id=chat_id, text=text, reply_markup=reply_markup,
+        parse_mode=parse_mode,
+    )
+    async with status_ticker(
+        bot, chat_id, message.message_id,
+        stages=stages, parse_mode=parse_mode, tick_seconds=tick_seconds,
+    ):
+        yield message

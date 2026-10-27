@@ -1,195 +1,152 @@
-import validators
+"""YouTube MP3 download (UX redesign §6.3) — the picker's Audio option.
+
+Same engine as the video flow (flow.run_media_flow): one task, one
+status message, honest cancellation at item boundaries. Audio is
+extracted to MP3 192k by an FFmpeg postprocessor.
+"""
+import os
 from logging import getLogger
 
 from telegram import Update
-from telegram.ext import ContextTypes
-from telegram.constants import ChatAction, ParseMode
-from configurations.settings import DOWNLOAD_MP3_PATH, YT_COOKIE_FILE
-from utils.constants import *
-from utils.constants.keyboards import BACK_KEYBOARD
-from utils.constants.messages import BOT_ID, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, LINK_IS_INVALID, PROCESSING, SOMETHING_WENT_WRONG
-from utils.constants.states import INSTAGRAM_STATE, YOUTUBE_MP3_STATE
+from telegram.constants import ChatAction
+from pydub import AudioSegment
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
-from utils.decorators import send_action, sync_user, log_message
-from utils import keyboards
-from utils.helpers import react_message
+from configurations.settings import DOWNLOAD_MP3_PATH, YT_COOKIE_FILE
+from utils import copy, keyboards
+from utils.constants import PLAYLIST
+from utils.constants.messages import BOT_ID, MEDIA_CAPTION
+from utils.helpers import escape_html, prepare_link
 from utils.storage import cleanup_media
 
-from yt_dlp import YoutubeDL, utils
-from pydub import AudioSegment
+from bot.handlers.youtube import flow
 
 # Init logger
 logger = getLogger(__name__)
 
-ydl_opts = {
-    'format': 'bestaudio/best',
-    'outtmpl': DOWNLOAD_MP3_PATH + '%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'cookiefile': YT_COOKIE_FILE,
-    # 'writethumbnail': True,
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }]
-}
+
+def _mp3_opts() -> dict:
+    return {
+        'format': 'bestaudio/best',
+        'outtmpl': DOWNLOAD_MP3_PATH + '%(title)s.%(ext)s',
+        'restrictfilenames': True,
+        'cookiefile': YT_COOKIE_FILE,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+    }
 
 
-async def run_mp3_download(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> None:
-    """Core YouTube/yt-dlp MP3 flow, shared by the menu state handler and
-    the universal link dispatcher (plan 1.1)."""
-    assert update.effective_chat is not None
-    assert update.effective_message is not None
+def _mp3_worker(url: str, opts: dict, cancel_flag, push) -> dict:
+    """Blocking worker (runs on a worker thread): resolve, then extract
+    audio per entry. Duration is read from the finished MP3 (pydub is
+    blocking, so it runs here, not on the event loop). Pushes the
+    sentinel that ends the flow in a finally block (flow contract)."""
+    outcome = {
+        "error": None, "title": None, "total": None,
+        "items": [], "failed": [],
+    }
+    try:
+        with YoutubeDL(opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=False)
+            except DownloadError:
+                logger.warning("yt-dlp extract failed for %s", url, exc_info=True)
+                outcome["error"] = "extract"
+                return outcome
 
-    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
-    bot_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=PROCESSING)
-
-    with YoutubeDL(ydl_opts) as ydl:
-        await context.bot.editMessageText(
-            message_id=bot_message.message_id,
-            chat_id=update.effective_chat.id,
-            text=GETTING_MEDIA_INFORMATION,
-        )
-
-        try:
-            info_dict = ydl.extract_info(url, download=False)
-        except utils.DownloadError:
-            await react_message(update, context.bot, "👎")
-            await context.bot.editMessageText(
-                message_id=bot_message.message_id,
-                chat_id=update.effective_chat.id,
-                text=SOMETHING_WENT_WRONG,
+            is_playlist = info.get("_type") == PLAYLIST
+            entries = (
+                [e for e in (info.get("entries") or []) if e is not None]
+                if is_playlist else [info]
             )
-            return
+            outcome["title"] = info.get("title") or url
+            outcome["total"] = len(entries)
+            push(("resolved", outcome["title"], len(entries)))
+            if not entries:
+                outcome["error"] = "empty"
+                return outcome
 
-        is_playlist = info_dict.get("_type") == PLAYLIST
-
-        await context.bot.editMessageText(
-            message_id=bot_message.message_id,
-            chat_id=update.effective_chat.id,
-            text=DOWNLOADING_VIDEO,
-        )
-
-        try:
-            ydl.download([url])
-
-            if is_playlist:
-                items = info_dict.get('entries')
-                if not items:
-                    await react_message(update, context.bot, "👎")
-                    await context.bot.editMessageText(
-                        message_id=bot_message.message_id,
-                        chat_id=update.effective_chat.id,
-                        text=SOMETHING_WENT_WRONG,
-                    )
-                    return
-                await context.bot.deleteMessage(
-                    message_id=bot_message.message_id,
-                    chat_id=update.effective_chat.id,
-                )
-                for index, item in enumerate(items):
-                    ydl.process_info(item)
-                    title = item.get('title')
-                    ext = item.get('ext')
+            for index, item in enumerate(entries, start=1):
+                if cancel_flag.is_set():
+                    break  # cancel: stop before the next item (spec §4.3)
+                item_title = item.get("title") or f"item {index}"
+                push(("item_start", index, len(entries), item_title))
+                try:
+                    ydl.process_info(item, download=True)
                     filename = ydl.prepare_filename(item)
-                    thumbnail_url = item.get("thumbnail")
-                    with open(filename, "rb") as f:
-                        # check for size
-
-                        # Load the MP3 file
-                        audio = AudioSegment.from_file(filename, format="mp3")
-
-                        duration = int(len(audio)/1000)
-
-                        await context.bot.send_chat_action(
-                            chat_id=update.effective_message.chat_id,
-                            action=ChatAction.UPLOAD_VOICE,
-                        )
-                        await context.bot.send_audio(
-                            chat_id=update.effective_chat.id, 
-                            audio=f, 
-                            duration=duration, 
-                            thumbnail=thumbnail_url, 
-                            caption=BOT_ID,  
-                            protect_content=True,
-                            reply_markup=keyboards.youtube_mp3_state_keyboard_rm
-                        )
-                        await react_message(update, context.bot, "👍")
-                        # delivered to Telegram: the local file is staging only
-                        cleanup_media(filename)
-            else:
-                ydl.process_info(info_dict)
-                title = info_dict.get('title')
-                ext = info_dict.get('ext')
-                filename = ydl.prepare_filename(info_dict)
-                thumbnail_url = info_dict.get("thumbnail")
-                with open(filename, "rb") as f:
-                    # check for video size
-
-                    # Load the MP3 file
                     audio = AudioSegment.from_file(filename, format="mp3")
-
-                    duration = int(len(audio)/1000)
-
-                    await context.bot.deleteMessage(
-                        message_id=bot_message.message_id,
-                        chat_id=update.effective_chat.id,
+                    item_result = {
+                        "path": filename,
+                        "title": item_title,
+                        "duration": int(len(audio) / 1000),
+                        "size_mb": round(os.path.getsize(filename) / (1024 * 1024), 2),
+                        "thumbnail_url": item.get("thumbnail"),
+                    }
+                    outcome["items"].append(item_result)
+                    push(("item_done", index, len(entries), item_result))
+                except DownloadError:
+                    logger.warning(
+                        "yt-dlp failed on item %d/%d (%s)",
+                        index, len(entries), item_title, exc_info=True,
                     )
-
-                    await context.bot.send_chat_action(
-                        chat_id=update.effective_message.chat_id,
-                        action=ChatAction.UPLOAD_VOICE,
+                    outcome["failed"].append(
+                        (item_title, item.get("url") or item.get("webpage_url"))
                     )
-                    await context.bot.send_audio(
-                        chat_id=update.effective_chat.id, 
-                        audio=f, 
-                        duration=duration, 
-                        thumbnail=thumbnail_url, 
-                        caption=BOT_ID,  
-                        protect_content=True,
-                        reply_markup=keyboards.youtube_mp3_state_keyboard_rm
-                    )
-                    await react_message(update, context.bot, "👍")
-                    # delivered to Telegram: the local file is staging only
-                    cleanup_media(filename)
-
-        except utils.DownloadError:
-            await react_message(update, context.bot, "👎")
-            await context.bot.editMessageText(
-                message_id=bot_message.message_id,
-                chat_id=update.effective_chat.id,
-                text=SOMETHING_WENT_WRONG,
-            )
+                    push(("item_failed", index, len(entries), item_title))
+    finally:
+        # the flow's completion signal — pushed even when the worker
+        # crashed (flow module docstring: the sentinel contract)
+        push((flow.SENTINEL, outcome))
+    return outcome
 
 
-@send_action(ChatAction.TYPING)
-@sync_user
-@log_message
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    assert update.message is not None
-    message = update.message.text
-    assert message is not None
-    print(message)
-    if message == BACK_KEYBOARD:
-        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
-        return INSTAGRAM_STATE
-
-    message_is_url = validators.url(message) # type: ignore
-
-    assert update.effective_chat is not None
-    assert update.effective_message is not None
-    assert update.effective_user is not None
-
-    if message_is_url:
-        await run_mp3_download(update, context, message)
-    else:
-        await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
-        bot_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=PROCESSING)
-        await react_message(update, context.bot, "👎")
-        await context.bot.editMessageText(
-            message_id=bot_message.message_id,
-            chat_id=update.effective_chat.id,
-            text=LINK_IS_INVALID,
+async def _deliver_audio(context, update, chat_id: int, item: dict) -> str:
+    """Loop-side delivery of one extracted MP3 (spec §6.3/§6.6)."""
+    if item["size_mb"] >= flow.MAX_SEND_MB:
+        link = prepare_link(item["path"])
+        text = (
+            copy.ERROR_TOO_LARGE + "\n"
+            + copy.ERROR_TOO_LARGE_NO_KNOWN_EXPIRY
         )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboards.too_large_keyboard(link),
+        )
+        return "linked"
 
-    return YOUTUBE_MP3_STATE
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+    with open(item["path"], "rb") as f:
+        await context.bot.send_audio(
+            chat_id=chat_id,
+            audio=f,
+            duration=item["duration"],
+            title=item["title"],
+            thumbnail=item["thumbnail_url"],
+            caption=MEDIA_CAPTION.format(
+                caption=escape_html(item["title"]), bot_id=BOT_ID
+            ),
+            parse_mode="HTML",
+            protect_content=True,
+        )
+    # delivered to Telegram: the local file is staging only
+    cleanup_media(item["path"])
+    return "sent"
+
+
+async def run_mp3_download(update: Update, context, url: str) -> None:
+    """The YouTube MP3 flow (undecorated core; the picker caller carries
+    its own chat action and DB work)."""
+    await flow.run_media_flow(
+        update, context,
+        url=url,
+        kind="youtube_mp3",
+        opts=_mp3_opts(),
+        worker=_mp3_worker,
+        deliver=_deliver_audio,
+    )

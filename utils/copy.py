@@ -229,7 +229,10 @@ TASK_NONE: str = (
     "Send a supported link to download media, or search for a song by name."
 )
 
+TASK_SEVERAL: str = "Several tasks are running — pick one below."
+
 BTN_TASK_CANCEL: str = "⏹ Cancel"
+BTN_TASK_STOPPING: str = "⏹ Stopping…"
 
 # Toasts (≤64 chars)
 TOAST_TASK_STALE: str = "This task has already finished."

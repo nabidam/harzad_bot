@@ -1,7 +1,8 @@
-"""#12 chat handlers × 6 — handler-level with mocked bot + fake yt-dlp.
+"""#12 chat handlers — legacy handler-level tests with mocked bot.
 
-The decorators (sync_user/log_message) run against the live test DB with
-unique tg_ids, cleaned up per test.
+The YouTube download-flow tests moved to tests/test_22_youtube_flow.py
+(redesign §6.3). The decorators (sync_user/log_message) run against the
+live test DB with unique tg_ids, cleaned up per test.
 """
 import asyncio
 import shutil
@@ -19,7 +20,6 @@ from utils import decorators
 from utils.constants.states import HOME_STATE, SEARCH_INPUT_STATE
 
 FIXTURES = Path(__file__).parent / "fixtures"
-SMALL_MP4 = FIXTURES / "small.mp4"
 SMALL_MP3 = FIXTURES / "small.mp3"
 
 
@@ -74,176 +74,6 @@ def make_context():
     return context
 
 
-class FakeYoutubeDL:
-    """Stands in for yt_dlp.YoutubeDL; 'downloads' = copies a fixture file."""
-
-    def __init__(self, opts, info, fixture: Path, tmp_path: Path,
-                 error_on_extract=False):
-        self._info = info
-        self._fixture = fixture
-        self._tmp = tmp_path
-        self._error_on_extract = error_on_extract
-        self.downloaded = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def extract_info(self, url, download=False):
-        if self._error_on_extract:
-            from yt_dlp.utils import DownloadError
-
-            raise DownloadError("fake extract failure")
-        return self._info
-
-    def download(self, urls):
-        for item in self._iter(self._info):
-            p = self.prepare_filename(item)
-            shutil.copy(self._fixture, p)
-            self.downloaded.append(p)
-
-    def process_info(self, info):
-        pass
-
-    def prepare_filename(self, info):
-        title = info.get("title") or "untitled"
-        return str(self._tmp / f"{title}.{info.get('ext', 'mp4')}")
-
-    @staticmethod
-    def _iter(info):
-        if info.get("_type") == "playlist":
-            return list(info.get("entries") or [])
-        return [info]
-
-
-def patch_ydl(monkeypatch, module, fake):
-    monkeypatch.setattr(module, "YoutubeDL", lambda opts: fake)
-
-
-# --- YouTube video ---------------------------------------------------------------
-
-@pytest.mark.usefixtures("test_tg")
-class TestYoutubeVideo:
-    def setup_method(self, method):
-        import bot.handlers.youtube.download as m
-
-        self.m = m
-
-    async def test_back_button(self, test_tg):
-        update = make_update("Back 🔙", test_tg)
-        context = make_context()
-        context.update = update
-        result = await self.m.handler(update, context)
-        assert result == self.m.INSTAGRAM_STATE
-        update.message.reply_text.assert_awaited_once()
-        assert update.message.reply_text.await_args.kwargs["reply_markup"] is not None
-
-    async def test_invalid_link(self, test_tg):
-        from utils.constants.messages import LINK_IS_INVALID
-
-        update = make_update("hello world", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_DOWNLOAD_STATE
-        edit = context.bot.editMessageText
-        edit.assert_awaited()
-        assert edit.await_args.kwargs["text"] == LINK_IS_INVALID
-        context.bot.set_message_reaction.assert_awaited_once()  # 👎
-
-    async def test_single_video_sends_video(self, test_tg, tmp_path, monkeypatch):
-        info = {"title": "T1", "ext": "mp4", "thumbnail": "http://t/x.webp"}
-        patch_ydl(monkeypatch, self.m, FakeYoutubeDL(None, info, SMALL_MP4, tmp_path))
-        update = make_update("https://www.youtube.com/watch?v=x", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_DOWNLOAD_STATE
-        sv = context.bot.send_video
-        sv.assert_awaited_once()
-        kwargs = sv.await_args.kwargs
-        assert kwargs["duration"] == 2  # int(2.02) from the fixture
-        assert kwargs["supports_streaming"] is True
-        assert kwargs["protect_content"] is True
-        assert kwargs["thumbnail"] == "http://t/x.webp"  # no local thumb -> URL
-        assert "T1" in kwargs["caption"]
-        context.bot.set_message_reaction.assert_awaited_once()  # 👍
-
-    async def test_extract_error(self, test_tg, tmp_path, monkeypatch):
-        from utils.constants.messages import SOMETHING_WENT_WRONG
-
-        fake = FakeYoutubeDL(None, {}, SMALL_MP4, tmp_path, error_on_extract=True)
-        patch_ydl(monkeypatch, self.m, fake)
-        update = make_update("https://www.youtube.com/watch?v=x", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_DOWNLOAD_STATE
-        assert context.bot.send_video.await_count == 0
-        edit = context.bot.editMessageText
-        assert edit.await_args.kwargs["text"] == SOMETHING_WENT_WRONG
-
-    async def test_playlist_single_entry(self, test_tg, tmp_path, monkeypatch):
-        info = {
-            "_type": "playlist",
-            "title": "PL",
-            "entries": [{"title": "E1", "ext": "mp4", "thumbnail": None}],
-        }
-        patch_ydl(monkeypatch, self.m, FakeYoutubeDL(None, info, SMALL_MP4, tmp_path))
-        update = make_update("https://www.youtube.com/playlist?list=x", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_DOWNLOAD_STATE
-        assert context.bot.send_video.await_count == 1
-
-    async def test_playlist_empty_entries(self, test_tg, tmp_path, monkeypatch):
-        from utils.constants.messages import SOMETHING_WENT_WRONG
-
-        info = {"_type": "playlist", "title": "PL", "entries": []}
-        patch_ydl(monkeypatch, self.m, FakeYoutubeDL(None, info, SMALL_MP4, tmp_path))
-        update = make_update("https://www.youtube.com/playlist?list=x", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_DOWNLOAD_STATE
-        assert context.bot.send_video.await_count == 0
-        assert (
-            context.bot.editMessageText.await_args.kwargs["text"]
-            == SOMETHING_WENT_WRONG
-        )
-
-
-# --- YouTube mp3 -------------------------------------------------------------------
-
-@pytest.mark.usefixtures("test_tg")
-class TestYoutubeMp3:
-    def setup_method(self, method):
-        import bot.handlers.youtube.mp3 as m
-
-        self.m = m
-
-    async def test_invalid_link(self, test_tg):
-        from utils.constants.messages import LINK_IS_INVALID
-
-        update = make_update("nope", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_MP3_STATE
-        assert (
-            context.bot.editMessageText.await_args.kwargs["text"] == LINK_IS_INVALID
-        )
-
-    async def test_single_mp3_sends_audio(self, test_tg, tmp_path, monkeypatch):
-        info = {"title": "M1", "ext": "mp3", "thumbnail": "http://t/x.jpg"}
-        patch_ydl(monkeypatch, self.m, FakeYoutubeDL(None, info, SMALL_MP3, tmp_path))
-        update = make_update("https://www.youtube.com/watch?v=x", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.YOUTUBE_MP3_STATE
-        sa = context.bot.send_audio
-        sa.assert_awaited_once()
-        kwargs = sa.await_args.kwargs
-        assert kwargs["duration"] >= 1
-        assert kwargs["protect_content"] is True
-        context.bot.set_message_reaction.assert_awaited_once()  # 👍
 
 
 # --- Pinterest ----------------------------------------------------------------------
