@@ -10,10 +10,20 @@ from datetime import datetime
 from logging import getLogger
 
 from telegram import Update, BotCommand, InputFile, InputProfilePhotoStatic, MenuButtonWebApp, WebAppInfo
-from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ContextTypes, Application, PicklePersistence
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    ContextTypes,
+    Application,
+    MessageHandler,
+    PicklePersistence,
+)
 from PIL import Image
 from bot.conversations.main import main_conversation_handler
+from bot.handlers import dispatch
+from bot.navigation import NAVIGATOR, navigate
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
+from utils.constants.keyboards import YT_FMT_CALLBACK_PATTERN
 from utils.constants.messages import SOMETHING_WENT_WRONG
 from web.app import start_server
 
@@ -120,17 +130,24 @@ async def set_profile_photo(bot) -> None:
         logger.warning("Could not set profile photo from %s", logo_path, exc_info=True)
 
 
-async def answer_stray_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Group-1 catch-all for inline-button clicks.
+async def handle_stray_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Group-1 catch-all for inline-button clicks with no active
+    conversation.
 
-    Inline buttons stay clickable forever after they are sent. If the user
-    clicks one while no conversation is active (never sent /start), the
-    conversation handler in group 0 does not match the update — without this,
-    nobody calls answerCallbackQuery and the client's button spinner hangs.
+    Inline buttons stay clickable forever after they are sent. A user
+    who never sent /start (e.g. they only used the universal link
+    dispatcher) has no conversation state, so the group-0 conversation
+    handler ignores their clicks. For nav buttons we run the shared
+    navigator — that drops them into the menu with no /start; anything
+    else is just answered so the client's button spinner doesn't hang.
     """
     cq = update.callback_query
-    if cq is not None:
-        await cq.answer()
+    if cq is None:
+        return
+    if (cq.data or "") in NAVIGATOR:
+        await navigate(update, context)
+        return
+    await cq.answer()
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -155,6 +172,30 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text(SOMETHING_WENT_WRONG)
         except Exception:
             logger.debug("Could not notify the user about the error", exc_info=True)
+
+
+def register_handlers(application: Application) -> None:
+    """All handler registration, in group order (plan 1.1 wiring).
+
+    Kept in a function so tests can build a real Application and verify
+    the tree without booting the bot.
+    """
+    application.add_handler(main_conversation_handler())
+    # Group 1: runs only when the group-0 conversation did not handle the
+    # update — i.e. the user has no active conversation (never sent /start).
+    # The universal dispatcher (plan 1.1) then lets a bare pasted link work
+    # even before /start. The format-callback handler is registered BEFORE
+    # the stray catch-all: within one group the first matching handler
+    # consumes the update, and the catch-all would otherwise swallow it.
+    application.add_handler(
+        MessageHandler(dispatch.MediaUrlFilter(), dispatch.handle_link), group=1
+    )
+    application.add_handler(
+        CallbackQueryHandler(dispatch.on_yt_format, pattern=YT_FMT_CALLBACK_PATTERN), group=1
+    )
+    application.add_handler(CallbackQueryHandler(handle_stray_callback), group=1)
+    application.add_error_handler(on_error)
+
 
 if __name__ == "__main__":
     now = datetime.now()
@@ -246,14 +287,7 @@ if __name__ == "__main__":
     
     application.bot_data["spotdl_instance"] = spotdl_instance
 
-    application.add_handler(main_conversation_handler())
-    # Group 1: if no conversation is active yet (user never sent /start),
-    # the conversation in group 0 ignores the update and this catch-all
-    # answers the click so the client's button spinner doesn't hang.
-    # When the conversation does handle a callback (block=True), this group
-    # is skipped, so there is no double handling.
-    application.add_handler(CallbackQueryHandler(answer_stray_callback), group=1)
-    application.add_error_handler(on_error)
+    register_handlers(application)
 
     # bootstrap_retries: -1 = keep retrying while the (flaky) proxy is down,
     # instead of dying on the first failed getMe

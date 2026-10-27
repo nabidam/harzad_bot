@@ -14,6 +14,13 @@ CB_AI: str = "nav:ai"
 CB_AI_CHAT: str = "nav:ai:chat"
 CB_AI_TTI: str = "nav:ai:ttI"
 
+# Universal dispatcher: YouTube format selector (plan 1.1). The clicked
+# format downloads the URL the dispatcher stashed in user_data.
+CB_YT_FMT_720: str = "yt:fmt:720"
+CB_YT_FMT_360: str = "yt:fmt:360"
+CB_YT_FMT_MP3: str = "yt:fmt:mp3"
+YT_FMT_CALLBACK_PATTERN: str = r"^yt:fmt:(?:720|360|mp3)$"
+
 # main keyboards
 START_KEYBOARD: str = "START"
 FIRST_KEYBOARD: str = "First"
@@ -41,3 +48,8 @@ YOUTUBE_MP3_KEYBOARD: str = "Download as mp3"
 AI_KEYBOARD: str = "AI 🤖"
 AI_CHAT_KEYBOARD: str = "Chat 💬"
 AI_TTI_KEYBOARD: str = "Text to image 🖼"
+
+# YouTube format selector (universal dispatcher, plan 1.1)
+YT_FORMAT_720: str = "🎬 Video (720p)"
+YT_FORMAT_360: str = "🎬 Video (360p)"
+YT_FORMAT_MP3: str = "🎵 Audio MP3"

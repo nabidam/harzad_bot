@@ -149,14 +149,33 @@ async def test_profile_photo_missing_logo_swallowed(tmp_path, monkeypatch):
     bot.set_my_profile_photo.assert_not_awaited()
 
 
-# --- answer_stray_callback ----------------------------------------------------------------
+# --- handle_stray_callback (group 1, no active conversation) ----------------
 
 async def test_stray_callback_answered():
+    """A non-nav button click with no conversation is just answered so the
+    client's spinner stops."""
     update = MagicMock()
     update.callback_query = MagicMock()
+    update.callback_query.data = "not:a:nav:id"
     update.callback_query.answer = AsyncMock()
-    await main.answer_stray_callback(update, MagicMock())
+    await main.handle_stray_callback(update, MagicMock())
     update.callback_query.answer.assert_awaited_once()
+
+
+async def test_stray_nav_callback_runs_navigator(monkeypatch):
+    """A nav button click without a conversation drops the user into the
+    menu via the shared navigator (plan 1.1 zero-friction entry)."""
+    navigate_mock = AsyncMock()
+    monkeypatch.setattr(main, "navigate", navigate_mock)
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "nav:start"
+    update.callback_query.answer = AsyncMock()
+    await main.handle_stray_callback(update, MagicMock())
+
+    navigate_mock.assert_awaited_once()
+    update.callback_query.answer.assert_not_awaited()
 
 
 MSG = {
@@ -172,7 +191,7 @@ async def test_stray_callback_no_cq_noop():
 
     update = Update.de_json({"update_id": 1, "message": MSG}, None)
     assert update.callback_query is None
-    await main.answer_stray_callback(update, MagicMock())  # must not raise
+    await main.handle_stray_callback(update, MagicMock())  # must not raise
 
 
 # --- on_error -------------------------------------------------------------------------------
@@ -226,3 +245,65 @@ async def test_on_error_non_update_object_is_quiet(monkeypatch):
     monkeypatch.setattr(main, "react_message", react)
     await main.on_error("not an update", MagicMock())
     react.assert_not_awaited()
+
+
+# --- register_handlers (plan 1.1 wiring) ---------------------------------------
+
+def test_register_handlers_builds_tree():
+    """The real handler tree from main.py must build and carry the
+    universal dispatcher in every conversation state (plan 1.1)."""
+    from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ConversationHandler, MessageHandler
+    from utils.constants.states import (
+        AI_CHAT_STATE, AI_STATE, INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE,
+        MUSIC_SPOTIFY_STATE, MUSIC_STATE, PINTEREST_STATE, START_STATE,
+        YOUTUBE_DOWNLOAD_STATE, YOUTUBE_MP3_STATE, YOUTUBE_STATE,
+    )
+    from bot.handlers import dispatch
+
+    app = ApplicationBuilder().token(settings.TOKEN).build()
+    main.register_handlers(app)
+
+    conv = app.handlers[0][0]
+    assert isinstance(conv, ConversationHandler)
+    for state in (START_STATE, INSTAGRAM_STATE, INSTAGRAM_DOWNLOAD_STATE,
+                  MUSIC_STATE, MUSIC_SPOTIFY_STATE, PINTEREST_STATE,
+                  YOUTUBE_STATE, YOUTUBE_DOWNLOAD_STATE, YOUTUBE_MP3_STATE,
+                  AI_STATE, AI_CHAT_STATE):
+        state_handlers = conv.states[state]
+        link_handlers = [
+            h for h in state_handlers
+            if isinstance(h, MessageHandler) and isinstance(h.filters, dispatch.MediaUrlFilter)
+        ]
+        assert link_handlers, f"state {state} has no media link handler"
+        # the link handler must come before that state's plain TEXT handler
+        # (a pasted link must not leak into the state's own input parsing)
+        text_handlers = [
+            h for h in state_handlers
+            if isinstance(h, MessageHandler) and not isinstance(h.filters, dispatch.MediaUrlFilter)
+        ]
+        if text_handlers:
+            assert state_handlers.index(link_handlers[0]) < state_handlers.index(text_handlers[0])
+        # the format-selector callback must precede navigate (no pattern):
+        # check_update picks the first matching handler per update
+        fmt = next(
+            h for h in state_handlers
+            if isinstance(h, CallbackQueryHandler) and h.callback is dispatch.on_yt_format
+        )
+        nav = next(
+            h for h in state_handlers
+            if isinstance(h, CallbackQueryHandler) and h.callback is not dispatch.on_yt_format
+        )
+        assert state_handlers.index(fmt) < state_handlers.index(nav)
+
+    group1 = app.handlers[1]
+    fmt = next(
+        h for h in group1
+        if isinstance(h, CallbackQueryHandler) and h.callback is dispatch.on_yt_format
+    )
+    stray = next(
+        h for h in group1
+        if isinstance(h, CallbackQueryHandler) and h.callback is main.handle_stray_callback
+    )
+    # first match in a group consumes the update: the specific format
+    # handler must be registered before the catch-all
+    assert group1.index(fmt) < group1.index(stray)

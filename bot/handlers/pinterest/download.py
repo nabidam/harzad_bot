@@ -40,19 +40,11 @@ ydl_opts = {
     # }]
 }
 
-@send_action(ChatAction.TYPING)
-@sync_user
-@log_message
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    assert update.message is not None
-    message = update.message.text
-    assert message is not None
-    print(message)
-    if message == BACK_KEYBOARD:
-        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
-        return INSTAGRAM_STATE
-
-
+async def run_pinterest_download(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """Core Pinterest flow (yt-dlp), shared by the menu state handler and
+    the universal link dispatcher (plan 1.1). `text` is the raw user
+    message; non-pin URLs get the invalid-link reply."""
+    message = text
     message_is_url = validators.url(message) # type: ignore
     message_is_pinterest = PINTEREST_SEGMENT in message
 
@@ -143,4 +135,20 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
     
+    return
+
+
+@send_action(ChatAction.TYPING)
+@sync_user
+@log_message
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
+    message = update.message.text
+    assert message is not None
+    print(message)
+    if message == BACK_KEYBOARD:
+        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
+        return INSTAGRAM_STATE
+
+    await run_pinterest_download(update, context, message)
     return PINTEREST_STATE

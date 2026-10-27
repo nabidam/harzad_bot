@@ -82,3 +82,10 @@ ai_chat_state_keyboard_rm = InlineKeyboardMarkup([
 ai_tti_state_keyboard_rm = InlineKeyboardMarkup([
     _back_home(CB_AI),
 ])
+
+# YouTube format selector (plan 1.1): shown the moment a YouTube link is
+# pasted, so the user picks a format instead of navigating menus first.
+youtube_format_keyboard = InlineKeyboardMarkup([
+    [_action(YT_FORMAT_720, CB_YT_FMT_720), _action(YT_FORMAT_360, CB_YT_FMT_360)],
+    [_action(YT_FORMAT_MP3, CB_YT_FMT_MP3)],
+])

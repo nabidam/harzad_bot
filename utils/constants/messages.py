@@ -270,6 +270,17 @@ AI_PROMPT_FOR_CAPTION: str = """
 Prompt: <code>{prompt}</code>
 """
 
+# Universal link dispatcher (plan 1.1)
+YT_FORMAT_PROMPT: str = """
+Pick a format for this video 👇
+"""
+
+UNSUPPORTED_LINK: str = """
+I don't know how to download from <code>{domain}</code> yet.
+
+I handle <b>Spotify</b>, <b>YouTube</b>, <b>Instagram</b>, <b>Pinterest</b> and <b>TikTok</b> links.
+"""
+
 COMMING_SOON: str = """
 This tool is going to be available in a near future... ❤️
 """

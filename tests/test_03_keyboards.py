@@ -42,14 +42,23 @@ def test_tti_not_wired():
 
 
 def test_every_keyboard_callback_is_navigable():
+    import re
+
+    from utils.constants.keyboards import YT_FMT_CALLBACK_PATTERN
+
     for name, markup in ALL_KEYBOARDS.items():
         for row in markup.inline_keyboard:
             for btn in row:
-                if btn.callback_data is not None:
-                    assert btn.callback_data in NAVIGATOR, (
-                        f"{name} button {btn.text!r} -> {btn.callback_data!r} "
-                        f"is not a NAVIGATOR key"
-                    )
+                if btn.callback_data is None:
+                    continue
+                # The YouTube format selector (plan 1.1) is an action
+                # callback handled by bot.handlers.dispatch, not a nav id.
+                if re.match(YT_FMT_CALLBACK_PATTERN, btn.callback_data):
+                    continue
+                assert btn.callback_data in NAVIGATOR, (
+                    f"{name} button {btn.text!r} -> {btn.callback_data!r} "
+                    f"is not a NAVIGATOR key"
+                )
 
 
 def test_every_navigator_destination_reachable_from_start():

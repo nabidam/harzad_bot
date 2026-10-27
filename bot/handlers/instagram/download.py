@@ -31,19 +31,14 @@ def build_caption(media_info) -> str:
         bot_id=BOT_ID,
     )
 
-@send_action(ChatAction.TYPING)
-@sync_user
-@log_message
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    assert update.message is not None
-    message = update.message.text
-    assert message is not None
-    print(message)
-    if message == BACK_KEYBOARD:
-        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
-        return INSTAGRAM_STATE
+async def run_instagram_download(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
+    """Core Instagram flow (instagrapi), shared by the menu state handler
+    and the universal link dispatcher (plan 1.1).
 
-
+    `text` is the raw user message: a post/reel/story URL or a
+    <code>@username</code> for the profile picture.
+    """
+    message = text
     message_is_url = validators.url(message) # type: ignore
 
     assert update.effective_chat is not None
@@ -359,4 +354,20 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await react_message(update, context.bot, "👎")
         await update.message.reply_text(LINK_IS_INVALID, reply_markup=keyboards.instagram_download_state_keyboard_rm)
-        return INSTAGRAM_DOWNLOAD_STATE
+        return
+
+
+@send_action(ChatAction.TYPING)
+@sync_user
+@log_message
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    assert update.message is not None
+    message = update.message.text
+    assert message is not None
+    print(message)
+    if message == BACK_KEYBOARD:
+        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
+        return INSTAGRAM_STATE
+
+    await run_instagram_download(update, context, message)
+    return INSTAGRAM_DOWNLOAD_STATE
