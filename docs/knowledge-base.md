@@ -202,6 +202,9 @@ awaited directly on the running bot loop (never the sync `spotdl.download` —
 §6.5) → `send_audio(title=s.json["name"],
 performer=s.json["artist"], thumbnail=s.cover_url, duration)`. Missing
 `p`/`cover_url` → silently skipped (AssertionError swallowed). End: "All done 🥳".
+Note: `thumbnail` is a remote URL — the audio arrives instantly and Telegram
+fetches the cover itself, so the art patches into the message a few seconds
+later (observed 2026-10-27; not a bug).
 
 **Pinterest** (`pinterest/download.py`): own `ydl_opts` (mp4 best, no cookies, no
 thumbnail) → extract/download/process → `send_video(thumbnail=remote url,
