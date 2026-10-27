@@ -61,7 +61,16 @@ def test_live_pinterest_download(proxy_env, monkeypatch):
 
 
 @pytest.mark.live
-def test_live_spotify_search_and_download(proxy_env, tmp_path):
+async def test_live_spotify_search_and_download(proxy_env, tmp_path):
+    """Real Spotify search + download through the PRODUCTION code path.
+
+    The download goes via `await_download_from_spotify` — the same
+    run_in_executor wrapper the bot uses — because spotdl 4.6 needs a
+    current event loop in the worker thread (see the 2026-10-27 crash);
+    calling spotdl.download() from the main thread would pass here and
+    still crash in the bot.
+    """
+    from bot.handlers.music.spotify.download import await_download_from_spotify
     from configurations.settings import (
         SPOTIFY_CLIENT_ID,
         SPOTIFY_CLIENT_SECRET,
@@ -89,7 +98,7 @@ def test_live_spotify_search_and_download(proxy_env, tmp_path):
     # a very short public track keeps the live test fast
     songs = spotdl.search(["concerto for rain"])
     assert songs, "spotify search returned nothing"
-    song, path = spotdl.download(songs[0])
+    song, path = await await_download_from_spotify(spotdl, songs[0])
     assert path is not None, "download produced no file"
     assert song is not None
     assert song.json.get("name")

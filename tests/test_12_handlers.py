@@ -3,9 +3,11 @@
 The decorators (sync_user/log_message) run against the live test DB with
 unique tg_ids, cleaned up per test.
 """
+import asyncio
 import shutil
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -297,6 +299,13 @@ class TestSpotify:
             name = "track.mp3"
 
         class FakeSpotdl:
+            def __init__(self):
+                # download_from_spotify binds this loop in the worker
+                # thread (spotdl 4.6 requirement) — must be a real loop
+                self.downloader = SimpleNamespace(
+                    loop=asyncio.new_event_loop()
+                )
+
             def search(self, terms):
                 return [FakeSong()]
 

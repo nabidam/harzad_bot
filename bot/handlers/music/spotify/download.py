@@ -36,6 +36,15 @@ async def await_search_from_spotify(spotdl: Spotdl, term: str):
     return result
 
 def download_from_spotify(spotdl: Spotdl, song: str):
+    # spotdl 4.6: download_multiple_songs() calls asyncio.gather(*tasks)
+    # WITHOUT a loop argument, so the tasks bind to the *current* event
+    # loop of the calling thread. Python 3.12 raises RuntimeError
+    # ("There is no current event loop in thread ...") in a bare
+    # run_in_executor worker thread — this crashed the live bot
+    # (2026-10-27). Bind the spotdl instance's own loop in this thread
+    # (this function always runs in one) so gather() and spotdl's
+    # internal run_until_complete() share exactly one loop.
+    asyncio.set_event_loop(spotdl.downloader.loop)
     return spotdl.download(song)
 
 async def await_download_from_spotify(spotdl: Spotdl, song: str):

@@ -245,8 +245,12 @@ chat payload `slice(0,-1)` drops the "…" placeholder turn.
   MySQL schema — **never run against the current DB**; schema is managed by hand.
 - `sync_user`/`log_message` decorators are the only writers. Read API
   (`get_user`, `get_users`, …) exists but is unused.
-- Current DB at test time: `harzad_test_pg` container, `127.0.0.1:5437/harzad`
-  (users=1, logs=51 as of 2026-10-26 10:11).
+- Current DB (since 2026-10-27): `baaham-postgres` container,
+  `127.0.0.1:5432/harzad_db` (user `baaham`, pgAdmin `baaham-pgadmin` :5050).
+  Supabase stack unreachable from this box — user commented out its `.env`
+  `DB_URI` and pointed at this DB instead. The old `harzad_test_pg` (5437)
+  container is Exited and retired. Tests (`tests/conftest.py`) pin the same
+  URI before import.
 
 ### 3.6 Configuration
 
@@ -364,12 +368,14 @@ Arch Linux container. Networking is the central constraint:
 - **pkill footgun** (hit twice): always bracket the pattern
   (`pkill -f "python main[.]py"`); never combine pkill + relaunch in one command line
   — the relaunch line's own cmdline matches and kills the shell.
-- **Docker** (don't touch the Supabase stack): `harzad_test_pg` = test Postgres
-  `127.0.0.1:5437/harzad` (postgres/hz9x) — **was Exited, restarted 2026-10-26 10:11**.
-  Local Supabase stack (`supabase_*_1819`, `baaham-*`), adminer, db/db_backup
-  (mysql) = unrelated.
-- Production Supabase DB reachable only in good proxy-egress windows — bot uses the
-  local test DB instead.
+- **Docker**: `baaham-postgres` = **the bot's Postgres**
+  `127.0.0.1:5432/harzad_db` (baaham/baaham_password; pgAdmin `baaham-pgadmin` :5050)
+  — user-migrated 2026-10-27 after Supabase went unreachable. Do not stop it.
+  `harzad_test_pg` (5437) retired (Exited 2026-10-27; died unguarded — same
+  failure mode as before). Local Supabase stack (`supabase_*_1819`), adminer,
+  db/db_backup (mysql) = unrelated.
+- Supabase stack (`db.mwzxysevdedjuhkidouv.supabase.co`) unreachable from this
+  box — that is why the bot moved to `baaham-postgres`.
 - Downloads land in `downloads/videos*` / `downloads/mp3s*` (outtmpl string-concat,
   nothing auto-cleans; 108 MB as of 2026-10-26). IG sessions would land in `login/`
   (not present — none saved yet).
@@ -391,6 +397,11 @@ Arch Linux container. Networking is the central constraint:
 4. **IG**: session load (login/*.json) or login (2 attempts) → media pk from URL →
    info → type-based send (photo/video/album/story/pfp).
 5. **Spotify**: search in executor → per-track download in executor → send_audio.
+   The download thread must bind spotdl's internal loop first
+   (`asyncio.set_event_loop(spotdl.downloader.loop)` in
+   `download_from_spotify`) — spotdl 4.6's `asyncio.gather()` takes no loop
+   arg and Py3.12 has no current loop in a bare worker thread (crashed in
+   production 2026-10-27, fixed + regression-tested via the production path).
 6. **Every handler**: `send_action` → `sync_user` (DB upsert) → `log_message`
    (DB insert) → logic.
 
@@ -459,10 +470,11 @@ Arch Linux container. Networking is the central constraint:
 
 ## 10. Open issues (current)
 
-1. **DB availability**: `harzad_test_pg` died (33 h before 2026-10-26 10:11) while the
-   bot pointed at it — every handler update would have failed at `sync_user` →
-   "Something went wrong". Container restarted; no user-visible damage (no updates
-   arrived in the gap). No liveness guard exists for the DB.
+1. **DB availability**: `harzad_test_pg` died unguarded twice (2026-10-26,
+   2026-10-27) while the bot pointed at it — every handler update would have
+   failed at `sync_user` → "Something went wrong". Bot + tests now use
+   `baaham-postgres` (`127.0.0.1:5432/harzad_db`) — same unguarded-container
+   risk remains; no liveness guard exists for any DB.
 2. `>50 MB` fallback link dead (`HOSTNAME=http://localhost/`) — Copy button only.
 3. Tunnel URL churn (~20 min) + client-side menu-button staleness → 502 window on
    phone tap; workaround = fresh URL message in chat. Stable domain = backlog #1.
@@ -521,20 +533,21 @@ maybe `respx` (httpx mocking for PTB-level unit tests).
 | 13 | `main.py` bootstrap | post_init order; menu-button only-when-URL logic | real boot (already routine) |
 | 14 | `utils.instagram`/`InstagramClient` | exception→LoginException mapping | IG login + one media (needs creds/session) |
 
-**Status 2026-10-26 — executed, all modules green.**
+**Status 2026-10-26 (suite built), 2026-10-27 (production-path fix) — all modules green.**
 
 - 183 unit/integration tests: `tests/test_01_settings.py` …
   `tests/test_14_instagram.py` + `tests/conftest.py`. Env matrix runs in a
   scratch package copy (load_dotenv resolves `.env` from the importing
   module, not cwd). Mini app via `aiohttp.test_utils.TestClient` with a
-  stubbed `_ytdlp_run`. DB tests hit `harzad_test_pg` with unique 32-bit
-  tg_ids, cleaned up in teardown. Handler tests use a fake `YoutubeDL` +
+  stubbed `_ytdlp_run`. DB tests hit the bot's own Postgres
+  (`baaham-postgres`) with unique 32-bit tg_ids, cleaned up in teardown. Handler tests use a fake `YoutubeDL` +
   ffmpeg-generated fixtures (`tests/fixtures/small.mp4|.mp3`). `respx` was
   never needed (mocking at module boundaries).
 - Live (`pytest -m live`): YT video ✅ (mp4 ≤720p + webp thumb, mutagen
   duration, `prepare_cover` → JPEG ≤190 KB), YT mp3 ✅
   (FFmpegExtractAudio via `/usr/bin/ffmpeg`), Spotify ✅ (real search +
-  download, "concerto for rain"), AI chat ✅ (production mini app against
+  download, "concerto for rain" — **through the production
+  executor path**, after the 2026-10-27 thread-loop crash), AI chat ✅ (production mini app against
   vLLM), Pinterest ⏸ (open issue #9), IG ⏸ (open issue #6 — left open by
   user request).
 - Bugs found by the suite and **fixed**: `escape_md` incomplete MDv2
@@ -545,6 +558,13 @@ maybe `respx` (httpx mocking for PTB-level unit tests).
   login failure (`os.remove` of a session file that does not exist — now
   guarded); `BadCredentials` (what instagrapi 3.x raises for empty/invalid
   creds) added to the `LoginException` mapping in `utils/InstagramClient.py`.
+  **2026-10-27, found in production (not by the suite):** spotdl 4.6's
+  `download_multiple_songs` calls `asyncio.gather(*tasks)` without a loop
+  argument → in the handler's worker thread Py3.12's `get_event_loop()`
+  raises `RuntimeError` (the main thread silently creates a loop, which is
+  why the first live test passed and the bot crashed). Fix: bind
+  `spotdl.downloader.loop` in the worker thread; the live Spotify test now
+  goes through `await_download_from_spotify` so it can never regress this.
 
 ## 12. Git & workflow
 

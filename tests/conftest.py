@@ -17,10 +17,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Tests talk to the local test Postgres container, never the .env Supabase
-# stack (the bot is launched with the same explicit DB_URI).
+# Tests talk to the local Postgres the bot itself uses (`baaham-postgres`
+# container, 2026-10-27 — the old `harzad_test_pg:5437` test container is
+# dead). `load_dotenv()` never overrides an env var that is already set,
+# which is what makes the pin stick.
 os.environ.setdefault(
-    "DB_URI", "postgresql+psycopg2://postgres:hz9x@127.0.0.1:5437/harzad"
+    "DB_URI", "postgresql+psycopg2://baaham:baaham_password@127.0.0.1:5432/harzad_db"
 )
 
 
