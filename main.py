@@ -22,6 +22,7 @@ from connectors.spotdl import create_spotdl_instance
 from utils.custom_context import MyContext
 from utils.helpers import create_requirement_folders, react_message
 from utils.logger import init_logger
+from utils import storage
 from spotdl import SpotifyClient, Spotdl
 
 logger = getLogger(__name__)
@@ -54,6 +55,11 @@ async def post_init(application: Application):
         )
     await set_profile_photo(bot)
     await start_mini_app(application)
+
+    # Plan 1.5: background garbage collection for the download folders
+    # (files older than 2h are removed; runs hourly). create_task keeps a
+    # reference so the task is cancelled with the application on shutdown.
+    application.create_task(storage.gc_loop())
 
 
 async def start_mini_app(application: Application) -> None:

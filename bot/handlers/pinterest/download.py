@@ -15,6 +15,7 @@ from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
 from utils import keyboards
 from utils.helpers import react_message
+from utils.storage import cleanup_media
 
 from instagrapi.exceptions import MediaNotFound
 from instagrapi.exceptions import UnknownError
@@ -124,6 +125,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         supports_streaming=True
                     )
                     await react_message(update, context.bot, "👍")
+                    # delivered to Telegram: the local file is staging only
+                    cleanup_media(filename)
             except utils.DownloadError:
                 await react_message(update, context.bot, "👎")
                 await context.bot.editMessageText(

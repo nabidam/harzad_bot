@@ -14,6 +14,7 @@ from utils.constants.states import INSTAGRAM_STATE, YOUTUBE_MP3_STATE
 from utils.decorators import send_action, sync_user, log_message
 from utils import keyboards
 from utils.helpers import react_message
+from utils.storage import cleanup_media
 
 from yt_dlp import YoutubeDL, utils
 from pydub import AudioSegment
@@ -136,6 +137,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 reply_markup=keyboards.youtube_mp3_state_keyboard_rm
                             )
                             await react_message(update, context.bot, "👍")
+                            # delivered to Telegram: the local file is staging only
+                            cleanup_media(filename)
                 else:
                     ydl.process_info(info_dict)
                     title = info_dict.get('title')
@@ -171,6 +174,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             reply_markup=keyboards.youtube_mp3_state_keyboard_rm
                         )
                         await react_message(update, context.bot, "👍")
+                        # delivered to Telegram: the local file is staging only
+                        cleanup_media(filename)
 
             except utils.DownloadError:
                 await react_message(update, context.bot, "👎")

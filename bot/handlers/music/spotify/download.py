@@ -18,6 +18,7 @@ from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
 from utils import keyboards
 from utils.helpers import react_message
+from utils.storage import cleanup_media
 # from utils.Spotidl import Spotidl
 from spotdl import Spotdl
 
@@ -112,6 +113,8 @@ async def handler(update: Update, context: MyContext):
                     duration=int(s.duration/1000),
                     protect_content=True,
                 )
+                # delivered to Telegram: the local file is staging only
+                cleanup_media(os.path.join(DOWNLOAD_MP3_PATH, p.name))
             except AssertionError:
                 pass
         

@@ -14,6 +14,7 @@ from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PI
 from utils.decorators import send_action, sync_user, log_message
 from utils.exceptions.instagram import LoginException
 from utils.helpers import escape_html, prepare_cover, prepare_link, react_message, send_html_msg
+from utils.storage import cleanup_media
 from utils import keyboards
 
 from utils.instagram import get_user_client_instagram
@@ -138,6 +139,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     supports_streaming=True
                                 )
                                 await react_message(update, context.bot, "👍")
+                                # delivered to Telegram: the local file is staging only
+                                cleanup_media(filename)
                             else:
                                 await context.bot.send_chat_action(
                                     chat_id=update.effective_message.chat_id,
@@ -196,6 +199,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 supports_streaming=True
                             )
                             await react_message(update, context.bot, "👍")
+                            # delivered to Telegram: the local file is staging only
+                            cleanup_media(filename)
                         else:
                             await context.bot.send_chat_action(
                                 chat_id=update.effective_message.chat_id,
