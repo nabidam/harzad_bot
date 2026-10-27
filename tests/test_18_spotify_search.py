@@ -369,11 +369,15 @@ async def _wait_for(predicate, timeout=5.0):
 
 
 def test_search_cancel_keyboard():
+    """Spec §4.2: Cancel for every long operation, Tasks when useful —
+    both on the live search status."""
     kb = keyboards.search_cancel_keyboard("ab12cd34")
-    btn = kb.inline_keyboard[0][0]
-    assert btn.text == copy.BTN_SEARCH_CANCEL
-    assert btn.callback_data == "search:cancel:ab12cd34"
-    assert btn.style is None  # neutral — escape hatch, not the action
+    row = kb.inline_keyboard[0]
+    assert [b.text for b in row] == [copy.BTN_SEARCH_CANCEL, copy.BTN_TASKS]
+    assert row[0].callback_data == "search:cancel:ab12cd34"
+    assert row[1].callback_data == "nav:tasks"
+    for b in row:
+        assert b.style is None  # neutral — escape hatches, not the action
 
 
 def test_search_cancel_pattern():

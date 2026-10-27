@@ -1,38 +1,57 @@
-"""Live status feedback for slow operations (search UX, 2026-10-27).
+"""Status engine for slow operations (UX redesign §4.1, §4.2).
 
-Telegram gives a slow operation no native progress UI: the typing
-indicator dies after ~5 s and then the user just stares at their own
-message for the rest of the wait. `live_status` owns one in-place status
-message for the whole operation:
+One bot message per task, edited in place at meaningful thresholds —
+never every second:
 
-- sends the status text immediately (before the slow call starts)
-- re-sends the typing indicator and re-renders the text with an
-  elapsed counter (via `tick_text(seconds)`) every few seconds, so a
-  45 s wait reads as "working", not "frozen"
-- never touches the message on exit: the caller deletes it (cards or
-  audio already sent) or edits it into the final answer
+- t=0    the accepted message (what is happening, plus context)
+- t=5s   still resolving, with the measured elapsed seconds
+- t=30s  "taking longer than usual"
+- t=60s  "still working — no reliable finish time available yet"
+
+The caller supplies the stage texts (the per-platform copy from
+utils/copy.py); a phase the engine cannot truthfully show is simply
+omitted — the engine never invents sub-phases, and elapsed time is
+measured, not simulated. The typing indicator is refreshed every ~4 s:
+a chat action, not a message edit, so it keeps the client's UI alive
+without touching the message.
 
 Ticker API failures (flaky proxy, user deleted the message) stop the
-ticker quietly — they never break the operation itself.
+ticker quietly — they never break the operation itself. The message is
+left to the caller (edit into the final answer or delete).
 """
 import asyncio
 import time
 from contextlib import asynccontextmanager
 from logging import getLogger
+from typing import Callable, Sequence, Tuple, Union
 
-from telegram.error import TelegramError
 from telegram.constants import ChatAction
+from telegram.error import TelegramError
 
 logger = getLogger(__name__)
 
 # Telegram's typing indicator lasts ~5 s; refresh just under that.
 TYPING_REFRESH_SECONDS = 4.0
 
+# Spec §4.2 standard progression thresholds (seconds).
+STAGE_RESOLVING = 5
+STAGE_SLOW = 30
+STAGE_STILL_WORKING = 60
+
+# (seconds, replacement) — replacement is a string or a callable
+# receiving the measured elapsed seconds and returning the new text.
+Stage = Tuple[int, Union[str, Callable[[int], str]]]
+
 
 @asynccontextmanager
 async def live_status(bot, chat_id, text, *, reply_markup=None, parse_mode=None,
-                      tick_seconds=TYPING_REFRESH_SECONDS, tick_text=None):
+                      stages: Sequence[Stage] = (),
+                      tick_seconds: float = TYPING_REFRESH_SECONDS):
     """Keep a status message alive while the body runs.
+
+    `text` is the t=0 accepted message. `stages` is an ascending list of
+    (at_seconds, replacement); each stage is applied exactly once when
+    the measured elapsed time reaches the threshold.
 
     Yields the sent `Message`. On exit the ticker is stopped and joined;
     the message itself is left for the caller to finish (edit/delete).
@@ -42,26 +61,47 @@ async def live_status(bot, chat_id, text, *, reply_markup=None, parse_mode=None,
         parse_mode=parse_mode,
     )
     stop = asyncio.Event()
+    started = time.monotonic()
+    stages = sorted(stages, key=lambda stage: stage[0])
+    next_stage = 0
 
     async def _ticker():
-        started = time.monotonic()
+        nonlocal next_stage
         while not stop.is_set():
+            # Sleep until whichever comes first: the typing refresh or
+            # the next threshold, so stages fire at their second, not
+            # up to a full tick late.
+            wait_for = tick_seconds
+            if next_stage < len(stages):
+                deadline = stages[next_stage][0] - (time.monotonic() - started)
+                if deadline > 0:
+                    wait_for = min(wait_for, deadline)
             try:
-                await asyncio.wait_for(stop.wait(), timeout=tick_seconds)
+                await asyncio.wait_for(stop.wait(), timeout=wait_for)
             except asyncio.TimeoutError:
                 pass
             if stop.is_set():
                 return
-            elapsed = max(1, int(time.monotonic() - started))
+            # Measured, floored — never padded (a 0.4 s old operation is
+            # not "1s elapsed"): the threshold test must see real time.
+            elapsed = int(time.monotonic() - started)
             try:
                 await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                if tick_text is not None:
+                # Apply every threshold crossed since the last tick.
+                while next_stage < len(stages) and elapsed >= stages[next_stage][0]:
+                    replacement = stages[next_stage][1]
+                    new_text = (
+                        replacement(elapsed)
+                        if callable(replacement)
+                        else replacement
+                    )
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message.message_id,
-                        text=tick_text(elapsed),
+                        text=new_text,
                         parse_mode=parse_mode,
                     )
+                    next_stage += 1
             except TelegramError:
                 logger.debug("live_status: ticker stopped (Bot API error)", exc_info=True)
                 return

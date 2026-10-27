@@ -1,8 +1,12 @@
 """#10 utils.decorators — restricted / sync_user / log_message / send_action.
 
-sync_user and log_message run against the live test DB (unique tg_ids,
-cleaned up in teardown).
+sync_user and log_message run their DB work in the BACKGROUND (spec
+§4.1: the acknowledgement must not wait on the auxiliary logging DB).
+Tests join the pending background work (decorators.join_pending_db_work)
+before asserting on rows or breaker state; the work itself runs against
+the live test DB (unique tg_ids, cleaned up in teardown).
 """
+import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,11 +26,14 @@ ADMIN_ID = int(ADMINS[0])
 
 
 @pytest.fixture(autouse=True)
-def _reset_db_breaker():
+async def _reset_db_breaker():
     """The DB breaker is a module singleton shared by both decorators;
-    isolate tests from each other's failures."""
+    isolate tests from each other's failures. The teardown joins
+    in-flight background DB work first, so rows/breaker state are
+    settled before cleanup and before the next test starts."""
     decorators._db_breaker.reset()
     yield
+    await decorators.join_pending_db_work()
     decorators._db_breaker.reset()
 
 
@@ -65,9 +72,13 @@ def db_session():
 
 
 @pytest.fixture
-def test_tg():
+async def test_tg():
     tg_id = _fresh_tg_id()
     yield tg_id
+    # join the background DB writes before deleting the test user's
+    # rows (spec §4.1 moved the decorators' DB work off the critical
+    # path)
+    await decorators.join_pending_db_work()
     db = SessionLocal()
     db.query(Log).filter(Log.tg_id == tg_id).delete()
     db.query(User).filter(User.tg_id == tg_id).delete()
@@ -112,12 +123,14 @@ async def test_sync_user_creates_then_updates(db_session, test_tg):
 
     update = make_update(tg_id=test_tg)
     assert await func(update, make_context()) == "ok"
+    await decorators.join_pending_db_work()
     assert user_cruds.user_exists(db_session, tg_id=test_tg)
     row = user_cruds.get_user(db_session, tg_id=test_tg)
     assert row.username == "u"
 
     # second call hits the update path
     assert await func(update, make_context()) == "ok"
+    await decorators.join_pending_db_work()
     assert seen == ["hi", "hi"]
     assert user_cruds.user_exists(db_session, tg_id=test_tg)
 
@@ -135,8 +148,38 @@ async def test_sync_user_soft_fails_on_db_failure(db_session, test_tg, monkeypat
         return "still ran"
 
     assert await func(make_update(tg_id=test_tg), make_context()) == "still ran"
+    await decorators.join_pending_db_work()
     # the failure was reported to the breaker
     assert decorators._db_breaker._consecutive_failures == 1
+
+
+async def test_critical_path_does_not_wait_on_db(db_session, test_tg, monkeypatch):
+    """Spec §4.1: acknowledgement target <1 s — the handler must return
+    (and send its first response) WITHOUT waiting for the auxiliary DB
+    sync. A slow DB may not delay the user."""
+    real_create = user_cruds.create_user
+
+    def slow_create(*a, **k):
+        time.sleep(0.5)
+        return real_create(*a, **k)
+
+    monkeypatch.setattr(user_cruds, "user_exists", lambda db, tg_id: None)
+    monkeypatch.setattr(user_cruds, "create_user", slow_create)
+
+    @sync_user
+    async def func(update, context):
+        return "acked"
+
+    started = time.monotonic()
+    assert await func(make_update(tg_id=test_tg), make_context()) == "acked"
+    elapsed = time.monotonic() - started
+
+    # the handler came back long before the 0.5 s DB write could finish
+    assert elapsed < 0.4
+    # and the DB work is still in flight — that is the point
+    assert decorators._pending_db_tasks
+    await decorators.join_pending_db_work()
+    assert db_session.query(User).filter(User.tg_id == test_tg).count() == 1
 
 
 # --- log_message ----------------------------------------------------------------
@@ -147,6 +190,7 @@ async def test_log_message_writes_row(db_session, test_tg):
         return "ran"
 
     assert await func(make_update(text="logged line", tg_id=test_tg), make_context()) == "ran"
+    await decorators.join_pending_db_work()
     logs = db_session.query(Log).filter(Log.tg_id == test_tg).all()
     assert len(logs) == 1
     assert logs[0].message == "logged line"
@@ -164,6 +208,7 @@ async def test_log_message_swallows_db_failure(db_session, test_tg, monkeypatch)
 
     # Unlike sync_user, log failure must not break the handler.
     assert await func(make_update(tg_id=test_tg), make_context()) == "still ran"
+    await decorators.join_pending_db_work()
 
 
 # --- send_action ------------------------------------------------------------------
@@ -201,6 +246,7 @@ async def test_composed_stack_order(db_session, test_tg):
     assert result == "composed"
     assert order == ["func"]
     context.bot.send_chat_action.assert_awaited_once()
+    await decorators.join_pending_db_work()
     assert user_cruds.user_exists(db_session, tg_id=test_tg)
     assert db_session.query(Log).filter(Log.tg_id == test_tg).count() == 1
 
@@ -224,12 +270,15 @@ async def test_breaker_opens_after_threshold_and_skips_db(db_session, test_tg, m
     update = make_update(tg_id=test_tg)
     for _ in range(2):
         assert await func(update, make_context()) == "ran"
+    await decorators.join_pending_db_work()
     assert breaker.is_open
 
-    # while open, the crud layer must not be touched at all
+    # while open, the crud layer must not be touched at all — the skip
+    # decision happens on the critical path, before any task is spawned
     calls = []
     monkeypatch.setattr(user_cruds, "create_user", lambda *a, **k: calls.append(1))
     assert await func(update, make_context()) == "ran"
+    assert decorators._pending_db_tasks == set()
     assert calls == []
 
 
@@ -248,6 +297,7 @@ async def test_breaker_half_open_probe_closes_on_success(db_session, test_tg, mo
 
     update = make_update(tg_id=test_tg)
     await func(update, make_context())
+    await decorators.join_pending_db_work()
     assert breaker.is_open
 
     # cool off -> half-open: the next call probes, succeeds, and the
@@ -257,6 +307,7 @@ async def test_breaker_half_open_probe_closes_on_success(db_session, test_tg, mo
     fake_user.tg_id = test_tg
     monkeypatch.setattr(user_cruds, "create_user", lambda *a, **k: fake_user)
     await func(update, make_context())
+    await decorators.join_pending_db_work()
     assert not breaker.is_open
     assert breaker._consecutive_failures == 0
 

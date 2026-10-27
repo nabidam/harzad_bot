@@ -15,6 +15,7 @@ import pytest
 from connectors.db import SessionLocal
 from models.log import Log
 from models.user import User
+from utils import decorators
 from utils.constants.states import HOME_STATE, SEARCH_INPUT_STATE
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -27,9 +28,13 @@ def _fresh_tg_id() -> int:
 
 
 @pytest.fixture
-def test_tg():
+async def test_tg():
     tg_id = _fresh_tg_id()
     yield tg_id
+    # the sync_user/log_message DB work is background (spec §4.1): wait
+    # for it before deleting the test user's rows, or a late write
+    # recreates them after the cleanup
+    await decorators.join_pending_db_work()
     db = SessionLocal()
     db.query(Log).filter(Log.tg_id == tg_id).delete()
     db.query(User).filter(User.tg_id == tg_id).delete()

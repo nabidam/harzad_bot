@@ -75,9 +75,11 @@ help_keyboard = InlineKeyboardMarkup([
 # --- Task status (spec §4.2) --------------------------------------------------
 
 def search_cancel_keyboard(token: str) -> InlineKeyboardMarkup:
-    """[⏹ Cancel search] on the live search status."""
+    """[⏹ Cancel search] [📥 Tasks] on the live search status (spec
+    §4.2: Cancel for every long operation, Tasks when useful)."""
     return InlineKeyboardMarkup([
-        [_button(copy.BTN_SEARCH_CANCEL, f"search:cancel:{token}")],
+        [_button(copy.BTN_SEARCH_CANCEL, f"search:cancel:{token}"),
+         _button(copy.BTN_TASKS, "nav:tasks")],
     ])
 
 

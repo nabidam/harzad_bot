@@ -10,6 +10,7 @@ message would pay the full connect timeout against a dead DB.
 
 Single-loop usage (asyncio): no locking needed.
 """
+import threading
 import time
 from logging import getLogger
 
@@ -23,6 +24,10 @@ class CircuitBreaker:
         self.reset_timeout = reset_timeout
         self._consecutive_failures = 0
         self._opened_at: float | None = None
+        # The DB breaker is a module singleton now touched from worker
+        # threads (background DB tasks) as well as the event loop, so the
+        # counter is guarded by a lock (plan 1.6 / redesign §4.1).
+        self._lock = threading.Lock()
 
     @property
     def is_open(self) -> bool:
@@ -33,26 +38,34 @@ class CircuitBreaker:
         counter is left at the threshold, so a failed probe re-opens the
         circuit immediately, while a success closes it for good.
         """
-        if self._opened_at is None:
+        with self._lock:
+            opened_at = self._opened_at
+        if opened_at is None:
             return False
-        if time.monotonic() - self._opened_at >= self.reset_timeout:
+        if time.monotonic() - opened_at >= self.reset_timeout:
             return False
         return True
 
     def record_success(self) -> None:
-        self._consecutive_failures = 0
-        self._opened_at = None
+        with self._lock:
+            self._consecutive_failures = 0
+            self._opened_at = None
 
     def record_failure(self) -> None:
-        self._consecutive_failures += 1
-        if self._consecutive_failures >= self.failure_threshold:
-            self._opened_at = time.monotonic()
-            logger.warning(
-                "circuit %r opened for %.0fs after %d consecutive failures",
-                self.name, self.reset_timeout, self._consecutive_failures,
-            )
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self.failure_threshold:
+                self._opened_at = time.monotonic()
+                failures = self._consecutive_failures
+            else:
+                return
+        logger.warning(
+            "circuit %r opened for %.0fs after %d consecutive failures",
+            self.name, self.reset_timeout, failures,
+        )
 
     def reset(self) -> None:
         """Force the closed state (used by tests)."""
-        self._consecutive_failures = 0
-        self._opened_at = None
+        with self._lock:
+            self._consecutive_failures = 0
+            self._opened_at = None

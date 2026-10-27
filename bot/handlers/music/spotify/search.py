@@ -31,7 +31,6 @@ from utils.constants.keyboards import (
     SEARCH_AGAIN_CALLBACK_PATTERN,
     SEARCH_CANCEL_CALLBACK_PATTERN,
 )
-from utils.constants.messages import SEARCHING, SEARCHING_TICK
 from utils.constants.states import SEARCH_INPUT_STATE
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
@@ -170,12 +169,12 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
     Core (undecorated) so the Search Music TEXT handler reuses it without
     a second DB row or chat action per message.
 
-    While the (slow) search runs, a live status message keeps the user
-    informed: an instant "Searching for …" with a Cancel button, a
-    re-sent typing indicator and an elapsed counter every few seconds.
-    The status message is ephemeral — the final answer (the result card,
-    no results, failure, cancelled) is a clean message without a dead
-    Cancel button.
+    While the (slow) search runs, the status engine (utils/progress)
+    keeps the user informed: an instant accepted message with Cancel +
+    Tasks buttons, then measured-elapsed phases at 5/30/60 s (spec
+    §4.2) — no fake progress, no invented ETA. The status message is
+    ephemeral — the final answer (the result card, no results, failure,
+    cancelled) is a clean message without a dead Cancel button.
     """
     assert update.effective_chat is not None
     assert update.effective_message is not None
@@ -197,10 +196,17 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
     async with progress.live_status(
         context.bot,
         chat_id,
-        SEARCHING.format(query=safe_query),
+        copy.SEARCH_WORKING.format(query=safe_query),
         reply_markup=keyboards.search_cancel_keyboard(seq),
         parse_mode=ParseMode.HTML,
-        tick_text=lambda elapsed: SEARCHING_TICK.format(query=safe_query, elapsed=elapsed),
+        stages=[
+            (progress.STAGE_RESOLVING,
+             lambda e: copy.SEARCH_WORKING_TICK.format(query=safe_query, elapsed=e)),
+            (progress.STAGE_SLOW,
+             lambda e: copy.SEARCH_SLOW.format(query=safe_query, elapsed=e)),
+            (progress.STAGE_STILL_WORKING,
+             lambda e: copy.SEARCH_VERY_SLOW.format(query=safe_query, elapsed=e)),
+        ],
     ) as status:
         cancelled, results, failed = await _await_search_or_cancel(query, cancel_event)
 
