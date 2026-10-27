@@ -125,8 +125,14 @@ Boot sequence (`main.py`):
    polling-layer errors — e.g. 409 Conflict — from handler errors).
 7. `run_polling(bootstrap_retries=-1)` — retry forever through proxy outages.
 
-`post_init` (runs in PTB's network-retry loop):
-- `set_my_commands` (/start, /help), `set_my_description`, `set_my_short_description`
+`post_init` — **NOT** in PTB's network-retry loop (only the bootstrap
+`initialize` is wrapped, per `Application.__run`):
+- `set_my_commands` (/start, /help), `set_my_description`,
+  `set_my_short_description` — wrapped in one try/except (2026-10-27 10:49:
+  a `setMyShortDescription` 50 s read timeout via the flaky proxy propagated
+  out of `post_init` and killed the process 50 s after start; the old
+  docstring claiming retry coverage was wrong). Failure only logs a
+  warning — profile cosmetics are re-set on the next boot.
 - `set_profile_photo`: `assets/logo.png` → 512×512 JPEG in memory →
   `setMyProfilePhoto(InputProfilePhotoStatic(InputFile(..., attach=True)))`.
   Failure never blocks boot.

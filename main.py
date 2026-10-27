@@ -30,19 +30,28 @@ logger = getLogger(__name__)
 async def post_init(application: Application):
     """Configure the bot's public profile once the application is up.
 
-    Runs inside the network retry loop, so a transient network error here
-    is retried before polling starts.
+    PTB does NOT run post_init inside its network retry loop — only the
+    bootstrap `initialize` is wrapped (see Application.__run). A transient
+    proxy failure here used to kill the whole process (2026-10-27 10:49:
+    setMyShortDescription hit the 50 s read timeout 50 s after start).
+    Everything below is guarded: these are profile cosmetics, the next
+    boot sets them again.
     """
     bot = application.bot
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Open the menu"),
-        BotCommand(command="help", description="How to use the bot"),
-    ])
-    await bot.set_my_description(
-        "Harzad downloads media from Instagram, Spotify, Pinterest and YouTube, "
-        "and can chat or generate images with AI. Send /start to begin."
-    )
-    await bot.set_my_short_description("Media downloader + AI 🎧🎞🤖")
+    try:
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Open the menu"),
+            BotCommand(command="help", description="How to use the bot"),
+        ])
+        await bot.set_my_description(
+            "Harzad downloads media from Instagram, Spotify, Pinterest and YouTube, "
+            "and can chat or generate images with AI. Send /start to begin."
+        )
+        await bot.set_my_short_description("Media downloader + AI 🎧🎞🤖")
+    except Exception:
+        logger.warning(
+            "post_init: profile setup failed; retried on next boot", exc_info=True
+        )
     await set_profile_photo(bot)
     await start_mini_app(application)
 
