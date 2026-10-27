@@ -259,6 +259,8 @@ def test_register_handlers_builds_tree():
         YOUTUBE_DOWNLOAD_STATE, YOUTUBE_MP3_STATE, YOUTUBE_STATE,
     )
     from bot.handlers import dispatch
+    from bot.handlers.music.spotify import search as spotify_search
+    from bot.navigation import navigate
 
     app = ApplicationBuilder().token(settings.TOKEN).build()
     main.register_handlers(app)
@@ -283,27 +285,57 @@ def test_register_handlers_builds_tree():
         ]
         if text_handlers:
             assert state_handlers.index(link_handlers[0]) < state_handlers.index(text_handlers[0])
-        # the format-selector callback must precede navigate (no pattern):
+        # pattern-matched callbacks must precede navigate (no pattern):
         # check_update picks the first matching handler per update
         fmt = next(
             h for h in state_handlers
             if isinstance(h, CallbackQueryHandler) and h.callback is dispatch.on_yt_format
         )
+        song = next(
+            h for h in state_handlers
+            if isinstance(h, CallbackQueryHandler) and h.callback is spotify_search.on_song_action
+        )
         nav = next(
             h for h in state_handlers
-            if isinstance(h, CallbackQueryHandler) and h.callback is not dispatch.on_yt_format
+            if isinstance(h, CallbackQueryHandler) and h.callback is navigate
         )
         assert state_handlers.index(fmt) < state_handlers.index(nav)
+        assert state_handlers.index(song) < state_handlers.index(nav)
 
     group1 = app.handlers[1]
     fmt = next(
         h for h in group1
         if isinstance(h, CallbackQueryHandler) and h.callback is dispatch.on_yt_format
     )
+    song = next(
+        h for h in group1
+        if isinstance(h, CallbackQueryHandler) and h.callback is spotify_search.on_song_action
+    )
     stray = next(
         h for h in group1
         if isinstance(h, CallbackQueryHandler) and h.callback is main.handle_stray_callback
     )
-    # first match in a group consumes the update: the specific format
-    # handler must be registered before the catch-all
+    # first match in a group consumes the update: the specific handlers
+    # must be registered before the catch-all
     assert group1.index(fmt) < group1.index(stray)
+    assert group1.index(song) < group1.index(stray)
+
+
+def test_music_state_searches_plain_text():
+    """MUSIC_STATE carries a plain-text search entry (plan 1.2) so typing
+    a song name in the music state works without a URL."""
+    from telegram.ext import ApplicationBuilder, ConversationHandler, MessageHandler, filters
+    from utils.constants.states import MUSIC_STATE
+    from bot.handlers.music.spotify import search as spotify_search
+
+    app = ApplicationBuilder().token(settings.TOKEN).build()
+    main.register_handlers(app)
+
+    conv = app.handlers[0][0]
+    assert isinstance(conv, ConversationHandler)
+    # filters.TEXT is a singleton instance — compare by identity
+    text_handlers = [
+        h for h in conv.states[MUSIC_STATE]
+        if isinstance(h, MessageHandler) and h.filters is filters.TEXT
+    ]
+    assert any(h.callback is spotify_search.handler for h in text_handlers)

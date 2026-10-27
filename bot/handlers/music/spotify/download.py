@@ -133,6 +133,11 @@ async def handler(update: Update, context: MyContext):
 
     if message_is_url:
         await run_spotify_download(update, context, message)
-    # else: plain text — no URL given. Phase 1.2 turns this into a search.
+    else:
+        # Plain text in the Spotify state is a song query (plan 1.2).
+        # Lazy import: search.py imports this module at top level for the
+        # card's Download button — a top-level import here would cycle.
+        from bot.handlers.music.spotify import search as spotify_search
+        await spotify_search.run_search(update, context, message)
 
     return MUSIC_SPOTIFY_STATE

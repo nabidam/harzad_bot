@@ -7,13 +7,13 @@ from telegram.ext import (
 )
 from bot.handlers import dispatch, start
 from bot.handlers.instagram import download
-from bot.handlers.music.spotify import download as spotify_download
+from bot.handlers.music.spotify import download as spotify_download, search as spotify_search
 from bot.handlers.pinterest import download as pinterest_download
 from bot.handlers.youtube import download as youtube_download, mp3 as youtube_mp3
 from bot.handlers.ai import chat
 from bot.navigation import navigate
 from utils import shared_handlers
-from utils.constants.keyboards import YT_FMT_CALLBACK_PATTERN
+from utils.constants.keyboards import SONG_ACTION_CALLBACK_PATTERN, YT_FMT_CALLBACK_PATTERN
 from utils.constants.states import (
     START_STATE,
     INSTAGRAM_STATE,
@@ -33,6 +33,9 @@ from utils.constants.states import (
 # pasted in the AI chat goes to the downloader, not the LLM).
 _media_url_filter = dispatch.MediaUrlFilter()
 _yt_format_cb = CallbackQueryHandler(dispatch.on_yt_format, pattern=YT_FMT_CALLBACK_PATTERN)
+_song_action_cb = CallbackQueryHandler(
+    spotify_search.on_song_action, pattern=SONG_ACTION_CALLBACK_PATTERN
+)
 _link_handler = MessageHandler(_media_url_filter, dispatch.handle_link)
 
 
@@ -50,24 +53,31 @@ def main_conversation_handler():
     link never leaks into state input parsing. The YouTube format
     selector (pattern-matched) precedes navigate, because
     check_update picks the first matching handler per update.
+
+    Phase 1.2: the song-card button handler (song:dl/song:lyr,
+    pattern-matched) sits next to the format selector, before navigate —
+    card buttons must resolve even in states that never rendered them.
     """
     conversation_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start.handler)],
         states={
             START_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
             ],
             INSTAGRAM_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
             ],
             INSTAGRAM_DOWNLOAD_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -75,12 +85,18 @@ def main_conversation_handler():
             ],
             MUSIC_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
+                # Plan 1.2: plain text in the music state is a song query.
+                # _link_handler above keeps pasted media URLs on the
+                # universal dispatcher path.
+                MessageHandler(filters.TEXT, spotify_search.handler),
             ],
             MUSIC_SPOTIFY_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -88,6 +104,7 @@ def main_conversation_handler():
             ],
             PINTEREST_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -95,12 +112,14 @@ def main_conversation_handler():
             ],
             YOUTUBE_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
             ],
             YOUTUBE_DOWNLOAD_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -108,6 +127,7 @@ def main_conversation_handler():
             ],
             YOUTUBE_MP3_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -115,12 +135,14 @@ def main_conversation_handler():
             ],
             AI_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
             ],
             AI_CHAT_STATE: [
                 _yt_format_cb,
+                _song_action_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,

@@ -284,3 +284,21 @@ I handle <b>Spotify</b>, <b>YouTube</b>, <b>Instagram</b>, <b>Pinterest</b> and 
 COMMING_SOON: str = """
 This tool is going to be available in a near future... ❤️
 """
+
+# Spotify text search (plan 1.2)
+# HTML parse mode; track fields are escaped with escape_html() before
+# being formatted in. `album_line` is a pre-built (possibly empty) line
+# so tracks without album metadata don't leave a dangling 📀.
+TRACK_CARD: str = """🎵 <b>{title}</b>
+<i>{artist}</i>{album_line}⏱ {duration}"""
+
+NO_RESULTS_FOUND: str = """
+No results for <b>{query}</b>.
+
+Try <code>artist title</code>, e.g. <code>Daft Punk Get Lucky</code>."""
+
+SEARCH_FAILED: str = """
+Couldn't reach Spotify right now. Try again in a moment."""
+
+# CallbackQuery.answer texts are capped at 64 characters.
+SONG_EXPIRED: str = "Results expired — search again"

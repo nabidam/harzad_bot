@@ -21,9 +21,10 @@ from telegram.ext import (
 from PIL import Image
 from bot.conversations.main import main_conversation_handler
 from bot.handlers import dispatch
+from bot.handlers.music.spotify import search as spotify_search
 from bot.navigation import NAVIGATOR, navigate
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
-from utils.constants.keyboards import YT_FMT_CALLBACK_PATTERN
+from utils.constants.keyboards import SONG_ACTION_CALLBACK_PATTERN, YT_FMT_CALLBACK_PATTERN
 from utils.constants.messages import SOMETHING_WENT_WRONG
 from web.app import start_server
 
@@ -192,6 +193,12 @@ def register_handlers(application: Application) -> None:
     )
     application.add_handler(
         CallbackQueryHandler(dispatch.on_yt_format, pattern=YT_FMT_CALLBACK_PATTERN), group=1
+    )
+    # Song-card buttons (plan 1.2): a user who searched from the menu can
+    # click a card after leaving the conversation — the catch-all below
+    # must not swallow them.
+    application.add_handler(
+        CallbackQueryHandler(spotify_search.on_song_action, pattern=SONG_ACTION_CALLBACK_PATTERN), group=1
     )
     application.add_handler(CallbackQueryHandler(handle_stray_callback), group=1)
     application.add_error_handler(on_error)

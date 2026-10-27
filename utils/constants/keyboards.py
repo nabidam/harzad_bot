@@ -21,6 +21,12 @@ CB_YT_FMT_360: str = "yt:fmt:360"
 CB_YT_FMT_MP3: str = "yt:fmt:mp3"
 YT_FMT_CALLBACK_PATTERN: str = r"^yt:fmt:(?:720|360|mp3)$"
 
+# Spotify search track cards (plan 1.2): the buttons act on the candidates
+# stashed in user_data["song_candidates"] when the cards were rendered —
+# callback_data can only carry the card index, not the track itself.
+# Groups: (1) action, (2) candidate index.
+SONG_ACTION_CALLBACK_PATTERN: str = r"^song:(dl|lyr):(\d+)$"
+
 # main keyboards
 START_KEYBOARD: str = "START"
 FIRST_KEYBOARD: str = "First"
@@ -53,3 +59,8 @@ AI_TTI_KEYBOARD: str = "Text to image 🖼"
 YT_FORMAT_720: str = "🎬 Video (720p)"
 YT_FORMAT_360: str = "🎬 Video (360p)"
 YT_FORMAT_MP3: str = "🎵 Audio MP3"
+
+# Spotify search cards (plan 1.2)
+SONG_DL_BUTTON: str = "⬇️ Download MP3"
+SONG_LYR_BUTTON: str = "📄 Lyrics"
+SONG_SPOTIFY_BUTTON: str = "🔗 Open on Spotify"
