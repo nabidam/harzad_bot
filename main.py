@@ -15,12 +15,14 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     Application,
+    InlineQueryHandler,
     MessageHandler,
     PicklePersistence,
 )
 from PIL import Image
 from bot.conversations.main import main_conversation_handler
 from bot.handlers import dispatch
+from bot.handlers import inline as inline_query
 from bot.handlers.music.spotify import search as spotify_search
 from bot.navigation import NAVIGATOR, navigate
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
@@ -182,6 +184,9 @@ def register_handlers(application: Application) -> None:
     the tree without booting the bot.
     """
     application.add_handler(main_conversation_handler())
+    # Inline query mode (plan 1.3): @harzad_bot <song> in any chat.
+    # A separate update type — the group-0 conversation never sees it.
+    application.add_handler(InlineQueryHandler(inline_query.handler))
     # Group 1: runs only when the group-0 conversation did not handle the
     # update — i.e. the user has no active conversation (never sent /start).
     # The universal dispatcher (plan 1.1) then lets a bare pasted link work

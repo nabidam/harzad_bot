@@ -320,6 +320,15 @@ def test_register_handlers_builds_tree():
     assert group1.index(fmt) < group1.index(stray)
     assert group1.index(song) < group1.index(stray)
 
+    # inline query mode (plan 1.3) is registered in group 0
+    from telegram.ext import InlineQueryHandler
+    from bot.handlers import inline as inline_query
+
+    inline_handlers = [
+        h for h in app.handlers[0] if isinstance(h, InlineQueryHandler)
+    ]
+    assert any(h.callback is inline_query.handler for h in inline_handlers)
+
 
 def test_music_state_searches_plain_text():
     """MUSIC_STATE carries a plain-text search entry (plan 1.2) so typing
