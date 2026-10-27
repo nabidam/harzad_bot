@@ -318,6 +318,8 @@ def test_track_keyboard_buttons():
     assert len(rows) == 2
     assert rows[0][0].text == "⬇️ Download MP3"
     assert rows[0][0].callback_data == "song:dl:2"
+    assert rows[0][1].text == "🎧 30s Preview"
+    assert rows[0][1].callback_data == "song:prev:2"
     assert rows[1][0].text == "📄 Lyrics"
     assert rows[1][0].callback_data == "song:lyr:2"
     assert rows[1][1].text == "🔗 Open on Spotify"
@@ -328,8 +330,8 @@ def test_track_keyboard_buttons():
 def test_song_action_pattern():
     assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:dl:0")
     assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:lyr:12")
+    assert re.match(SONG_ACTION_CALLBACK_PATTERN, "song:prev:3")
     assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "song:dl:x")
-    assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "song:prev:0")
     assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "yt:fmt:720")
     assert not re.match(SONG_ACTION_CALLBACK_PATTERN, "nav:music")
 

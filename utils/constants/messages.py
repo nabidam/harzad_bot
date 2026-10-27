@@ -302,3 +302,4 @@ Couldn't reach Spotify right now. Try again in a moment."""
 
 # CallbackQuery.answer texts are capped at 64 characters.
 SONG_EXPIRED: str = "Results expired — search again"
+NO_PREVIEW: str = "No 30s preview found for this track"

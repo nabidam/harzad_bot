@@ -94,12 +94,13 @@ youtube_format_keyboard = InlineKeyboardMarkup([
 def track_keyboard(index: int, spotify_url: str) -> InlineKeyboardMarkup:
     """Buttons for one Spotify search-result card (plan 1.2).
 
-    Download/Lyrics carry the card's index into
+    Download/Preview/Lyrics carry the card's index into
     user_data["song_candidates"] (see SONG_ACTION_CALLBACK_PATTERN);
     Open-on-Spotify is a plain URL button, so it needs no handler.
     """
     return InlineKeyboardMarkup([
-        [_action(SONG_DL_BUTTON, f"song:dl:{index}")],
+        [_action(SONG_DL_BUTTON, f"song:dl:{index}"),
+         _action(SONG_PREVIEW_BUTTON, f"song:prev:{index}")],
         [
             _action(SONG_LYR_BUTTON, f"song:lyr:{index}"),
             InlineKeyboardButton(SONG_SPOTIFY_BUTTON, url=spotify_url),

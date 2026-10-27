@@ -2,11 +2,11 @@
 
 Plain text in the music states is treated as a query: the top matches
 from the same Spotify backend spotdl uses at boot are rendered as photo
-cards with [⬇️ Download MP3] / [📄 Lyrics] / [🔗 Open on Spotify]
-buttons. The rendered candidates are stashed in
+cards with [⬇️ Download MP3] / [🎧 30s Preview] / [📄 Lyrics] /
+[🔗 Open on Spotify] buttons. The rendered candidates are stashed in
 user_data["song_candidates"] so the callback buttons can resolve them —
-callback_data can only carry the card index. Lyrics land in Phase 2.4;
-the 30s preview button (plan 1.4) is added to this same keyboard.
+callback_data can only carry the card index. Previews come from the
+iTunes/Deezer fallback (plan 1.4); lyrics land in Phase 2.4.
 """
 import re
 from logging import getLogger
@@ -15,11 +15,13 @@ from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 
+from connectors.preview import resolve_preview_url
 from connectors.spotify_search import TrackResult, format_duration, search_tracks
 from utils import keyboards
 from utils.constants.keyboards import SONG_ACTION_CALLBACK_PATTERN
 from utils.constants.messages import (
     COMMING_SOON,
+    NO_PREVIEW,
     NO_RESULTS_FOUND,
     SEARCH_FAILED,
     SONG_EXPIRED,
@@ -151,5 +153,35 @@ async def on_song_action(update: Update, context: MyContext):
         await cq.answer(COMMING_SOON, show_alert=True)
         return
 
+    if action == "prev":
+        await _send_preview(cq, update, context, track)
+        return
+
     await cq.answer()
     await spotify_download.run_spotify_download(update, context, track.spotify_url)
+
+
+async def _send_preview(
+    cq, update: Update, context: MyContext, track: TrackResult
+) -> None:
+    """Send the 30s preview clip for a card track (plan 1.4).
+
+    Spotify's own preview_url when the item carries one; otherwise the
+    iTunes/Deezer fallback (the free backend never does). Telegram fetches
+    the MP3 URL itself — no staging on disk.
+    """
+    assert update.effective_chat is not None
+    url = track.preview_url
+    if not url:
+        url = await resolve_preview_url(track.title, track.artist)
+    if not url:
+        await cq.answer(NO_PREVIEW, show_alert=True)
+        return
+    await cq.answer()
+    await context.bot.send_audio(
+        chat_id=update.effective_chat.id,
+        audio=url,
+        title=track.title,
+        performer=track.artist,
+        protect_content=True,
+    )

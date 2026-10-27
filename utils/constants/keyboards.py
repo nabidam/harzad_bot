@@ -25,7 +25,7 @@ YT_FMT_CALLBACK_PATTERN: str = r"^yt:fmt:(?:720|360|mp3)$"
 # stashed in user_data["song_candidates"] when the cards were rendered —
 # callback_data can only carry the card index, not the track itself.
 # Groups: (1) action, (2) candidate index.
-SONG_ACTION_CALLBACK_PATTERN: str = r"^song:(dl|lyr):(\d+)$"
+SONG_ACTION_CALLBACK_PATTERN: str = r"^song:(dl|lyr|prev):(\d+)$"
 
 # main keyboards
 START_KEYBOARD: str = "START"
@@ -62,5 +62,6 @@ YT_FORMAT_MP3: str = "🎵 Audio MP3"
 
 # Spotify search cards (plan 1.2)
 SONG_DL_BUTTON: str = "⬇️ Download MP3"
+SONG_PREVIEW_BUTTON: str = "🎧 30s Preview"
 SONG_LYR_BUTTON: str = "📄 Lyrics"
 SONG_SPOTIFY_BUTTON: str = "🔗 Open on Spotify"
