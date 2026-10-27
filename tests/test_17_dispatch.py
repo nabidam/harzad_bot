@@ -111,6 +111,49 @@ def test_media_url_filter():
     assert f.filter(msg) is False
 
 
+def test_media_url_filter_check_update_regression():
+    """Regression (2026-10-27 12:58 live incident): the framework calls
+    the filter's check_update(), not filter(). The filter must subclass
+    MessageFilter (which routes check_update -> filter); subclassing
+    plain BaseFilter made EVERY message update pass — /start and plain
+    text all hit handle_link and crashed on its URL assert."""
+    from telegram import Update
+
+    f = dispatch.MediaUrlFilter()
+
+    def msg_update(text):
+        return Update.de_json(
+            {
+                "update_id": 1,
+                "message": {
+                    "message_id": 1,
+                    "date": 1,
+                    "chat": {"id": 1, "type": "private"},
+                    "text": text,
+                },
+            },
+            None,
+        )
+
+    assert not f.check_update(msg_update("/start"))
+    assert not f.check_update(msg_update("hello there"))
+    assert f.check_update(msg_update("https://youtu.be/abc123"))
+    # a callback-only update has no message -> never a media link
+    cb_update = Update.de_json(
+        {
+            "update_id": 2,
+            "callback_query": {
+                "id": "1",
+                "from": {"id": 1, "is_bot": False, "first_name": "a"},
+                "chat_instance": "x",
+                "data": "d",
+            },
+        },
+        None,
+    )
+    assert not f.check_update(cb_update)
+
+
 # --- handle_link routing -------------------------------------------------------
 
 async def test_youtube_link_shows_format_selector():

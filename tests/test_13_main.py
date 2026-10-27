@@ -303,18 +303,32 @@ def test_register_handlers_builds_tree():
         assert state_handlers.index(song) < state_handlers.index(nav)
 
     group1 = app.handlers[1]
+    # Group-1 fallback handlers are guard-wrapped (main._group1_guard);
+    # the original callback is kept on `_harzad_guarded`.
+    def unwrap(h):
+        return getattr(h.callback, "_harzad_guarded", h.callback)
+
+    link = next(
+        h for h in group1
+        if isinstance(h, MessageHandler) and isinstance(h.filters, dispatch.MediaUrlFilter)
+    )
     fmt = next(
         h for h in group1
-        if isinstance(h, CallbackQueryHandler) and h.callback is dispatch.on_yt_format
+        if isinstance(h, CallbackQueryHandler) and unwrap(h) is dispatch.on_yt_format
     )
     song = next(
         h for h in group1
-        if isinstance(h, CallbackQueryHandler) and h.callback is spotify_search.on_song_action
+        if isinstance(h, CallbackQueryHandler) and unwrap(h) is spotify_search.on_song_action
     )
     stray = next(
         h for h in group1
-        if isinstance(h, CallbackQueryHandler) and h.callback is main.handle_stray_callback
+        if isinstance(h, CallbackQueryHandler) and unwrap(h) is main.handle_stray_callback
     )
+    # Every group-1 fallback must be guard-wrapped: PTB evaluates every
+    # group for every update, so an unguarded copy double-fires for
+    # users with an active conversation (live incident 2026-10-27).
+    for h in (link, fmt, song, stray):
+        assert hasattr(h.callback, "_harzad_guarded"), f"unguarded group-1 handler {h.callback}"
     # first match in a group consumes the update: the specific handlers
     # must be registered before the catch-all
     assert group1.index(fmt) < group1.index(stray)
@@ -328,6 +342,92 @@ def test_register_handlers_builds_tree():
         h for h in app.handlers[0] if isinstance(h, InlineQueryHandler)
     ]
     assert any(h.callback is inline_query.handler for h in inline_handlers)
+
+
+def _make_guard():
+    """A real conversation plus its group-1 guard, for behavior tests."""
+    from bot.conversations.main import main_conversation_handler
+
+    conv = main_conversation_handler()
+    return conv, main._group1_guard(conv)
+
+
+async def test_group1_guard_runs_without_conversation():
+    conv, guard = _make_guard()
+    calls = []
+
+    async def fake(update, context):
+        calls.append(1)
+
+    update = MagicMock()
+    update.effective_chat = MagicMock(id=7)
+    update.effective_user = MagicMock(id=8)
+    update.callback_query = None
+
+    await guard(fake)(update, MagicMock())
+
+    assert calls == [1]
+
+
+async def test_group1_guard_skips_active_conversation():
+    """A user with an active conversation is owned by the group-0
+    conversation's own handler copies; the guarded group-1 fallback must
+    stay silent for their updates."""
+    conv, guard = _make_guard()
+    calls = []
+
+    async def fake(update, context):
+        calls.append(1)
+
+    conv._conversations[(7, 8)] = 0  # active conversation for (chat, user)
+
+    update = MagicMock()
+    update.effective_chat = MagicMock(id=7)
+    update.effective_user = MagicMock(id=8)
+    update.callback_query = None
+
+    await guard(fake)(update, MagicMock())
+
+    assert calls == []
+
+
+async def test_group1_guard_other_user_unaffected():
+    conv, guard = _make_guard()
+    calls = []
+
+    async def fake(update, context):
+        calls.append(1)
+
+    conv._conversations[(7, 99)] = 0  # another user in the same chat
+
+    update = MagicMock()
+    update.effective_chat = MagicMock(id=7)
+    update.effective_user = MagicMock(id=8)  # no conversation of their own
+    update.callback_query = None
+
+    await guard(fake)(update, MagicMock())
+
+    assert calls == [1]
+
+
+async def test_group1_guard_inline_callback_no_chat():
+    """Inline-result callbacks carry no chat: the key can't be built, so
+    the guard lets them through (there is no conversation to conflict
+    with in that chat anyway)."""
+    conv, guard = _make_guard()
+    calls = []
+
+    async def fake(update, context):
+        calls.append(1)
+
+    update = MagicMock()
+    update.effective_chat = None
+    update.effective_user = MagicMock(id=8)
+    update.callback_query = MagicMock(inline_message_id="in1", message=None)
+
+    await guard(fake)(update, MagicMock())
+
+    assert calls == [1]
 
 
 def test_music_state_searches_plain_text():

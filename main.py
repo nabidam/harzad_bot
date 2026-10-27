@@ -177,35 +177,92 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
             logger.debug("Could not notify the user about the error", exc_info=True)
 
 
+def _conversation_key(conv, update):
+    """Mirror of ConversationHandler._get_key for the group-1 guard.
+
+    Built from the handler's own per_* flags (this app uses the defaults:
+    per_chat + per_user). Returns None when the key cannot be built
+    (e.g. callbacks from inline results carry no chat).
+    """
+    key = []
+    chat, user = update.effective_chat, update.effective_user
+    if getattr(conv, "per_chat", True):
+        if chat is None:
+            return None
+        key.append(chat.id)
+    if getattr(conv, "per_user", True):
+        if user is None:
+            return None
+        key.append(user.id)
+    if getattr(conv, "per_message", False):
+        cq = update.callback_query
+        if cq is None:
+            return None
+        key.append(cq.inline_message_id or (cq.message.message_id if cq.message else None))
+    return tuple(key) if key else None
+
+
+def _group1_guard(conv):
+    """Wrap a group-1 handler so it only runs for users WITHOUT an active
+    conversation.
+
+    PTB evaluates every group for every update ("0 or 1 handler per
+    group", not "stop after the first group" — see Application
+    add_handler docs). The conversation carries its own copies of the
+    dispatcher's handlers, so without this guard a link or button
+    handled inside the conversation would be handled a second time in
+    group 1: double downloads, spurious "expired" toasts, duplicate
+    answerCallbackQuery/editMessageText calls (live incident
+    2026-10-27 12:58 — one nav click answered + edited twice).
+    """
+    def wrap(handler):
+        async def guarded(update: Update, context):
+            key = _conversation_key(conv, update)
+            # _conversations is PTB-internal (no public accessor in v22);
+            # the dict is updated by the group-0 run before group 1 sees
+            # the update, so an entry here means the conversation already
+            # handled (or is handling) this user.
+            if key is not None and key in getattr(conv, "_conversations", {}):
+                return None
+            return await handler(update, context)
+
+        guarded._harzad_guarded = handler
+        return guarded
+
+    return wrap
+
+
 def register_handlers(application: Application) -> None:
     """All handler registration, in group order (plan 1.1 wiring).
 
     Kept in a function so tests can build a real Application and verify
     the tree without booting the bot.
     """
-    application.add_handler(main_conversation_handler())
+    conv = main_conversation_handler()
+    application.add_handler(conv)
+    guard = _group1_guard(conv)
     # Inline query mode (plan 1.3): @harzad_bot <song> in any chat.
     # A separate update type — the group-0 conversation never sees it.
     application.add_handler(InlineQueryHandler(inline_query.handler))
-    # Group 1: runs only when the group-0 conversation did not handle the
-    # update — i.e. the user has no active conversation (never sent /start).
-    # The universal dispatcher (plan 1.1) then lets a bare pasted link work
-    # even before /start. The format-callback handler is registered BEFORE
-    # the stray catch-all: within one group the first matching handler
-    # consumes the update, and the catch-all would otherwise swallow it.
+    # Group 1: fallback for users with no active conversation (never sent
+    # /start) — a bare pasted link or a stray card button must still work.
+    # Every handler below is guard-wrapped: when the user DOES have an
+    # active conversation, the group-0 conversation's own copy of the
+    # handler owns the update (PTB still evaluates group 1 — see
+    # _group1_guard).
     application.add_handler(
-        MessageHandler(dispatch.MediaUrlFilter(), dispatch.handle_link), group=1
+        MessageHandler(dispatch.MediaUrlFilter(), guard(dispatch.handle_link)), group=1
     )
     application.add_handler(
-        CallbackQueryHandler(dispatch.on_yt_format, pattern=YT_FMT_CALLBACK_PATTERN), group=1
+        CallbackQueryHandler(guard(dispatch.on_yt_format), pattern=YT_FMT_CALLBACK_PATTERN), group=1
     )
     # Song-card buttons (plan 1.2): a user who searched from the menu can
     # click a card after leaving the conversation — the catch-all below
     # must not swallow them.
     application.add_handler(
-        CallbackQueryHandler(spotify_search.on_song_action, pattern=SONG_ACTION_CALLBACK_PATTERN), group=1
+        CallbackQueryHandler(guard(spotify_search.on_song_action), pattern=SONG_ACTION_CALLBACK_PATTERN), group=1
     )
-    application.add_handler(CallbackQueryHandler(handle_stray_callback), group=1)
+    application.add_handler(CallbackQueryHandler(guard(handle_stray_callback)), group=1)
     application.add_error_handler(on_error)
 
 

@@ -42,11 +42,17 @@ from bot.handlers.youtube import download as youtube_download, mp3 as youtube_mp
 logger = getLogger(__name__)
 
 
-class MediaUrlFilter(filters.BaseFilter):
+class MediaUrlFilter(filters.MessageFilter):
     """True when the message carries a URL of a platform we download.
 
     Messages without a link (or with a foreign one, e.g. a google search)
     fall through to whatever the state's own TEXT handler does.
+
+    Must subclass MessageFilter (not plain BaseFilter): the framework
+    calls the filter's `check_update`, and BaseFilter.check_update only
+    tests "is this a message update at all" — it never invokes
+    `filter()`. Subclassing BaseFilter made every text message (even
+    /start) pass this filter (live incident 2026-10-27 12:58).
     """
 
     def filter(self, message) -> bool:
