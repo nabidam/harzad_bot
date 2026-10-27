@@ -1,7 +1,7 @@
 """#18 Spotify text search & the single editable result card (redesign §5) —
 raw search mapping, 300s cache, card rendering, tokenized song-card
 callbacks, carousel, stale toasts, state wiring, live search feedback +
-cancel."""
+cancel + the §4.4 timeout guard."""
 import asyncio
 import re
 import time
@@ -380,6 +380,20 @@ def test_search_cancel_keyboard():
         assert b.style is None  # neutral — escape hatches, not the action
 
 
+def test_search_timeout_keyboard():
+    """Spec §5.4: the timeout result carries [Search again] [Home]."""
+    kb = keyboards.search_timeout_keyboard("ab12cd34")
+    row = kb.inline_keyboard[0]
+    assert [b.text for b in row] == [copy.BTN_SEARCH_AGAIN, copy.BTN_HOME]
+    assert row[0].callback_data == "search:again:ab12cd34"
+    assert row[1].callback_data == "nav:home"
+
+
+def test_search_timeout_guard_is_90s():
+    """Spec §4.4 proposed guard (owner decision: default applies)."""
+    assert search.SEARCH_TIMEOUT_SECONDS == 90
+
+
 def test_search_cancel_pattern():
     from utils.constants.keyboards import SEARCH_CANCEL_CALLBACK_PATTERN
 
@@ -455,6 +469,85 @@ async def test_run_search_cancelled(monkeypatch):
     text = update.message.reply_text.await_args.args[0]
     assert "cancelled" in text.lower()
     context.status_message.delete.assert_awaited_once()
+
+
+async def test_run_search_times_out_with_retry_card(monkeypatch):
+    """Spec §4.4/§5.4: a search that has not answered by the guard ends
+    in the timeout card — [Search again] [Home], no result card, status
+    removed. The late backend result is discarded, never sent."""
+    monkeypatch.setattr(search, "SEARCH_TIMEOUT_SECONDS", 0.1)
+
+    async def slow_search(term):
+        await asyncio.sleep(0.4)
+        return [fake_track(0)]
+
+    monkeypatch.setattr(search, "search_tracks", slow_search)
+    update = make_update("starboy")
+    context = make_context()
+
+    await search.run_search(update, context, "starboy")
+
+    context.bot.send_photo.assert_not_awaited()  # no result card
+    context.status_message.delete.assert_awaited_once()
+
+    kw = update.message.reply_text.await_args
+    assert kw.args[0] == copy.SEARCH_TIMEOUT
+    row = kw.kwargs["reply_markup"].inline_keyboard[0]
+    assert [b.text for b in row] == [copy.BTN_SEARCH_AGAIN, copy.BTN_HOME]
+    token = row[0].callback_data.removeprefix("search:again:")
+
+    # the retry token names the timed-out query (empty result set) so
+    # search:again can re-run it
+    entry = get_token_store(context, search.RESULTS_STORE).get(token)
+    assert entry["query"] == "starboy"
+    assert entry["tracks"] == []
+
+
+async def test_search_timeout_retry_reruns_the_query(monkeypatch):
+    """[Search again] on the timeout card re-runs the same query — the
+    search:again path, so the 300 s stale rule applies to it too."""
+    monkeypatch.setattr(search, "SEARCH_TIMEOUT_SECONDS", 0.1)
+
+    async def slow_search(term):
+        await asyncio.sleep(0.4)
+        return [fake_track(0)]
+
+    monkeypatch.setattr(search, "search_tracks", slow_search)
+    update = make_update("starboy")
+    context = make_context()
+    await search.run_search(update, context, "starboy")
+
+    token = (
+        update.message.reply_text.await_args.kwargs["reply_markup"]
+        .inline_keyboard[0][0].callback_data.removeprefix("search:again:")
+    )
+
+    # the retry finds the backend fast
+    monkeypatch.setattr(
+        search, "search_tracks", AsyncMock(return_value=[fake_track(0)])
+    )
+    await search.on_search_again(make_callback(f"search:again:{token}"), context)
+
+    context.bot.send_photo.assert_awaited_once()
+
+
+async def test_finished_search_wins_over_the_guard(monkeypatch):
+    """A search that lands just before the guard still delivers its
+    card — the guard must never discard finished work."""
+    monkeypatch.setattr(search, "SEARCH_TIMEOUT_SECONDS", 0.2)
+
+    async def just_in_time(term):
+        await asyncio.sleep(0.05)
+        return [fake_track(0)]
+
+    monkeypatch.setattr(search, "search_tracks", just_in_time)
+    update = make_update("starboy")
+    context = make_context()
+
+    await search.run_search(update, context, "starboy")
+
+    context.bot.send_photo.assert_awaited_once()
+    update.message.reply_text.assert_not_awaited()
 
 
 async def test_on_search_cancel_stale_seq_toast(monkeypatch):

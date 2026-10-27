@@ -54,6 +54,13 @@ RESULTS_STORE = "search_results"
 # Spec §5.3: cache the result set for 300 seconds.
 RESULTS_TTL_SECONDS = 300
 
+# Spec §4.4 proposed guard for Spotify text search (owner decision: the
+# recommended default applies; production telemetry should validate it
+# before it is treated as a measured fact). The backend's own free-API
+# search has been observed around 45 s, so 90 s means "something is
+# wrong", not "slow but normal".
+SEARCH_TIMEOUT_SECONDS = 90
+
 
 def card_caption(track: TrackResult, index: int, total: int) -> str:
     """HTML caption for the result card (copy.track_caption, spec §5.3).
@@ -174,7 +181,14 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
     Tasks buttons, then measured-elapsed phases at 5/30/60 s (spec
     §4.2) — no fake progress, no invented ETA. The status message is
     ephemeral — the final answer (the result card, no results, failure,
-    cancelled) is a clean message without a dead Cancel button.
+    cancelled, timed out) is a clean message without a dead Cancel
+    button.
+
+    Spec §4.4: a search that has not answered by SEARCH_TIMEOUT_SECONDS
+    ends in the timeout card (Search again + Home). The backend's
+    worker thread cannot be killed, so the timeout detaches the wait
+    and discards any late result — the copy never claims the backend
+    stopped.
     """
     assert update.effective_chat is not None
     assert update.effective_message is not None
@@ -208,7 +222,9 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
              lambda e: copy.SEARCH_VERY_SLOW.format(query=safe_query, elapsed=e)),
         ],
     ) as status:
-        cancelled, results, failed = await _await_search_or_cancel(query, cancel_event)
+        cancelled, timed_out, results, failed = await _await_search_or_cancel(
+            query, cancel_event
+        )
 
     # Ephemeral status: remove it so no dead Cancel button lingers
     # (best-effort — the user may have deleted it already).
@@ -219,6 +235,20 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
 
     if cancelled:
         await message.reply_text(copy.SEARCH_CANCELLED, parse_mode=ParseMode.HTML)
+        return
+    if timed_out:
+        # The timed-out query is stored (empty result set) so [Search
+        # again] reuses the search:again path and its 300 s stale rule
+        # (spec §5.4). The backend may still finish in the background —
+        # its late result is discarded, never sent after the timeout.
+        retry_token = get_token_store(context, RESULTS_STORE).put(
+            {"query": query, "tracks": []}, RESULTS_TTL_SECONDS
+        )
+        await message.reply_text(
+            copy.SEARCH_TIMEOUT,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.search_timeout_keyboard(retry_token),
+        )
         return
     if failed:
         await message.reply_text(copy.SEARCH_FAILED, parse_mode=ParseMode.HTML)
@@ -238,45 +268,64 @@ async def run_search(update: Update, context: MyContext, query: str) -> None:
     await _send_card(update, context, token, 1, len(results))
 
 
-async def _await_search_or_cancel(query: str, cancel_event: asyncio.Event):
-    """Race the Spotify search against the user's Cancel button.
+async def _await_search_or_cancel(
+    query: str, cancel_event: asyncio.Event, timeout_seconds: float | None = None
+):
+    """Race the Spotify search against the user's Cancel button and the
+    spec §4.4 timeout guard.
 
-    Returns `(cancelled, results, failed)`. The search runs as a task;
-    cancelling stops the wait — the worker thread itself cannot be
-    killed, its result is simply discarded. If both land on the same
-    tick, the finished search wins (the work is done; don't throw it
-    away).
+    Returns `(cancelled, timed_out, results, failed)`. The search runs
+    as a task; cancelling or timing out stops the WAIT — the worker
+    thread itself cannot be killed, its late result is simply
+    discarded (the copy must never claim the backend stopped). If the
+    search lands on the same tick as the other two, the finished
+    search wins (the work is done; don't throw it away). An explicit
+    Cancel beat by the user takes precedence over the guard.
     """
+    if timeout_seconds is None:
+        timeout_seconds = SEARCH_TIMEOUT_SECONDS
     search_task = asyncio.create_task(search_tracks(query))
     cancel_task = asyncio.create_task(cancel_event.wait())
+    timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
     try:
         done, _pending = await asyncio.wait(
-            {search_task, cancel_task},
+            {search_task, cancel_task, timeout_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
     except asyncio.CancelledError:
-        # the whole handler was torn down (shutdown) — take both tasks
-        # with it
-        search_task.cancel()
-        cancel_task.cancel()
-        await asyncio.gather(search_task, cancel_task, return_exceptions=True)
+        # the whole handler was torn down (shutdown) — take all three
+        # tasks with it
+        for task in (search_task, cancel_task, timeout_task):
+            task.cancel()
+        await asyncio.gather(
+            search_task, cancel_task, timeout_task, return_exceptions=True
+        )
         raise
 
-    cancelled = cancel_task in done and search_task not in done
-    for task in (search_task, cancel_task):
+    search_done = search_task.done()
+    cancelled = not search_done and cancel_task in done
+    timed_out = not search_done and not cancelled and timeout_task in done
+    for task in (search_task, cancel_task, timeout_task):
         if not task.done():
             task.cancel()
-    await asyncio.gather(search_task, cancel_task, return_exceptions=True)
+    await asyncio.gather(
+        search_task, cancel_task, timeout_task, return_exceptions=True
+    )
 
     if cancelled:
-        return True, None, False
+        return True, False, None, False
+    if timed_out:
+        logger.warning(
+            "Spotify search for %r timed out after %.0fs", query, timeout_seconds
+        )
+        return False, True, None, False
     try:
-        return False, search_task.result(), False
+        return False, False, search_task.result(), False
     except Exception:
         # backend/network hiccup — tell the user instead of dropping
         # the update into the generic error handler
         logger.warning("Spotify search failed for %r", query, exc_info=True)
-        return False, None, True
+        return False, False, None, True
 
 
 async def on_search_cancel(update: Update, context: MyContext):

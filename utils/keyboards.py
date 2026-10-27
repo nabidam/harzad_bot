@@ -83,6 +83,16 @@ def search_cancel_keyboard(token: str) -> InlineKeyboardMarkup:
     ])
 
 
+def search_timeout_keyboard(token: str) -> InlineKeyboardMarkup:
+    """[🔎 Search again] [🏠 Home] on the search timeout result (spec
+    §5.4). The token names the timed-out query (an empty result set),
+    so retry reuses the search:again path and its 300 s stale rule."""
+    return InlineKeyboardMarkup([
+        [_button(copy.BTN_SEARCH_AGAIN, f"search:again:{token}"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
 def task_cancel_keyboard(token: str) -> InlineKeyboardMarkup:
     """[⏹ Cancel] [📥 Tasks] on a running task status."""
     return InlineKeyboardMarkup([
