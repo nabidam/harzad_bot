@@ -52,12 +52,19 @@ def make_update(text, tg_id, chat_id=1):
 
 def make_context():
     context = MagicMock()
+    # search status message: live_status() sends it via send_message and
+    # the search flow deletes it when done
+    status = MagicMock()
+    status.message_id = 500
+    status.delete = AsyncMock()
+    context.status_message = status
     context.bot = MagicMock()
     for m in (
-        "send_message", "send_chat_action", "send_video", "send_audio",
+        "send_chat_action", "send_video", "send_audio",
         "send_photo", "editMessageText", "deleteMessage", "set_message_reaction",
     ):
         setattr(context.bot, m, AsyncMock())
+    context.bot.send_message = AsyncMock(return_value=status)
     return context
 
 
@@ -278,12 +285,19 @@ class TestSpotify:
         assert result == self.m.START_STATE
         update.message.reply_text.assert_awaited_once()
 
-    async def test_non_url_skips_download(self, test_tg):
+    async def test_non_url_skips_download(self, test_tg, monkeypatch):
+        from bot.handlers.music.spotify import search as spotify_search
+        run_search = AsyncMock()
+        monkeypatch.setattr(spotify_search, "run_search", run_search)
         update = make_update("just a search term", test_tg)
         context = make_context()
         result = await self.m.handler(update, context)
         assert result == self.m.MUSIC_SPOTIFY_STATE
-        context.bot.send_message.assert_not_awaited()
+        # plain text goes to the live search flow, never the downloader
+        run_search.assert_awaited_once()
+        assert run_search.await_args.args[2] == "just a search term"
+        context.bot.send_audio.assert_not_awaited()
+        context.bot.send_photo.assert_not_awaited()
 
     async def test_track_download(self, test_tg, tmp_path, monkeypatch):
         # point the download dir at tmp

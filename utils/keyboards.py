@@ -91,6 +91,17 @@ youtube_format_keyboard = InlineKeyboardMarkup([
 ])
 
 
+def search_cancel_keyboard(seq: str) -> InlineKeyboardMarkup:
+    """One neutral Cancel button for the live search status message.
+
+    No `primary` style: Cancel is the escape hatch, not the action —
+    the eye stays on the search itself.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(SEARCH_CANCEL_BUTTON, callback_data=f"srx:c:{seq}")],
+    ])
+
+
 def track_keyboard(index: int, spotify_url: str) -> InlineKeyboardMarkup:
     """Buttons for one Spotify search-result card (plan 1.2).
 

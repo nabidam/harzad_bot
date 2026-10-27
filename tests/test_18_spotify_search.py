@@ -1,6 +1,9 @@
 """#18 Spotify text search & track cards (plan 1.2) — raw search mapping,
-300s cache, card rendering, song-card callbacks, state wiring."""
+300s cache, card rendering, song-card callbacks, state wiring, live
+search feedback + cancel (2026-10-27 UX)."""
+import asyncio
 import re
+import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +20,7 @@ from utils.constants.messages import (
     NO_RESULTS_FOUND,
     SEARCH_FAILED,
     SONG_EXPIRED,
+    STALE_SEARCH_CANCEL,
 )
 from utils.constants.states import MUSIC_SPOTIFY_STATE, MUSIC_STATE
 
@@ -44,11 +48,19 @@ def make_context():
     context = MagicMock()
     context.user_data = {}
     context.application.bot_data = {}
+    # The search status message: live_status() sends it via send_message
+    # and the caller deletes it when the search is done.
+    status = MagicMock()
+    status.message_id = 500
+    status.delete = AsyncMock()
+    context.status_message = status
     context.bot = MagicMock()
-    for m in ("send_message", "send_chat_action", "send_video", "send_audio",
-              "send_photo", "editMessageText", "deleteMessage",
+    for m in ("send_chat_action", "send_video", "send_audio",
+              "send_photo", "editMessageText", "edit_message_text",
+              "deleteMessage", "delete_message",
               "set_message_reaction"):
         setattr(context.bot, m, AsyncMock())
+    context.bot.send_message = AsyncMock(return_value=status)
     return context
 
 
@@ -232,10 +244,17 @@ async def test_run_search_sends_photo_and_text_cards(monkeypatch):
     assert _buttons(kw["reply_markup"])[0].callback_data == "song:dl:0"
 
     # card 1 has no cover -> plain-text fallback, same buttons
-    context.bot.send_message.assert_awaited_once()
-    kw = context.bot.send_message.await_args.kwargs
-    assert "<b>Title 1</b>" in kw["text"]
+    # (send_message is also the live-status channel — pick the card call)
+    card_calls = [
+        c for c in context.bot.send_message.await_args_list
+        if "<b>Title 1</b>" in c.kwargs.get("text", "")
+    ]
+    assert len(card_calls) == 1
+    kw = card_calls[0].kwargs
     assert _buttons(kw["reply_markup"])[0].callback_data == "song:dl:1"
+
+    # the ephemeral status message was cleaned up
+    context.status_message.delete.assert_awaited_once()
 
 
 async def test_run_search_escapes_html_in_caption(monkeypatch):
@@ -267,7 +286,11 @@ async def test_run_search_cover_fetch_failure_falls_back(monkeypatch):
 
     await search.run_search(update, context, "x")  # must not raise
 
-    context.bot.send_message.assert_awaited_once()
+    card_calls = [
+        c for c in context.bot.send_message.await_args_list
+        if "<b>Title 0</b>" in c.kwargs.get("text", "")
+    ]
+    assert len(card_calls) == 1
 
 
 async def test_run_search_no_results(monkeypatch):
@@ -282,6 +305,7 @@ async def test_run_search_no_results(monkeypatch):
     text = update.message.reply_text.await_args.args[0]
     assert "No results" in text
     assert "zzz qqq" in text
+    context.status_message.delete.assert_awaited_once()
 
 
 async def test_run_search_backend_failure_reports(monkeypatch):
@@ -297,6 +321,7 @@ async def test_run_search_backend_failure_reports(monkeypatch):
     text = update.message.reply_text.await_args.args[0]
     assert "Couldn't reach Spotify" in text
     assert search.CANDIDATES_KEY not in context.user_data
+    context.status_message.delete.assert_awaited_once()
 
 
 async def test_run_search_empty_query_is_noop(monkeypatch):
@@ -308,6 +333,135 @@ async def test_run_search_empty_query_is_noop(monkeypatch):
     await search.run_search(update, context, "   ")
 
     mock.assert_not_awaited()
+    context.bot.send_message.assert_not_awaited()  # no status without a query
+
+
+# --- live search feedback + cancel (2026-10-27 UX) ---------------------------------
+
+async def _wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition was not met in time")
+        await asyncio.sleep(0.01)
+
+
+def test_search_cancel_keyboard():
+    kb = keyboards.search_cancel_keyboard("ab12cd34")
+    btn = kb.inline_keyboard[0][0]
+    assert btn.text == "⏹️ Cancel"
+    assert btn.callback_data == "srx:c:ab12cd34"
+    assert btn.style is None  # neutral — escape hatch, not the action
+
+
+def test_search_cancel_pattern():
+    from utils.constants.keyboards import SEARCH_CANCEL_CALLBACK_PATTERN
+
+    assert re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "srx:c:ab12cd34")
+    assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "srx:c:xyz")
+    assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "srx:c:ab12cd345")
+    assert not re.match(SEARCH_CANCEL_CALLBACK_PATTERN, "song:dl:0")
+
+
+async def test_run_search_status_up_before_result(monkeypatch):
+    """The moment the query is typed, a status message with a Cancel
+    button is sent — feedback must not wait for the (slow) search."""
+    release = asyncio.Event()
+
+    async def slow_search(term):
+        await release.wait()
+        return [fake_track(0)]
+
+    monkeypatch.setattr(search, "search_tracks", slow_search)
+    update = make_update("starboy")
+    context = make_context()
+
+    task = asyncio.create_task(search.run_search(update, context, "starboy"))
+    await _wait_for(
+        lambda: search.CANCEL_KEY in context.user_data
+        and context.bot.send_message.await_count >= 1
+    )
+
+    # status message is already up, carrying the live Cancel button
+    status_kw = context.bot.send_message.await_args_list[0].kwargs
+    assert "starboy" in status_kw["text"]
+    seq, _event = context.user_data[search.CANCEL_KEY]
+    assert (
+        status_kw["reply_markup"].inline_keyboard[0][0].callback_data
+        == f"srx:c:{seq}"
+    )
+
+    release.set()
+    await task
+
+    context.bot.send_photo.assert_awaited_once()
+    context.status_message.delete.assert_awaited_once()
+
+
+async def test_run_search_cancelled(monkeypatch):
+    """Cancelling mid-search stops the wait: no cards, a clean
+    'cancelled' message, status removed."""
+    release = asyncio.Event()
+
+    async def slow_search(term):
+        await release.wait()
+        return [fake_track(0)]
+
+    monkeypatch.setattr(search, "search_tracks", slow_search)
+    update = make_update("starboy")
+    context = make_context()
+
+    task = asyncio.create_task(search.run_search(update, context, "starboy"))
+    await _wait_for(lambda: search.CANCEL_KEY in context.user_data)
+    seq, _event = context.user_data[search.CANCEL_KEY]
+
+    # the user taps Cancel on the status message
+    await search.on_search_cancel(make_callback(f"srx:c:{seq}"), context)
+
+    # the cancel wins the race — the search is still pending here
+    await task
+    release.set()  # release the (already cancelled) search's wait — hygiene
+
+    context.bot.send_photo.assert_not_awaited()
+    assert search.CANDIDATES_KEY not in context.user_data
+    text = update.message.reply_text.await_args.args[0]
+    assert "cancelled" in text.lower()
+    context.status_message.delete.assert_awaited_once()
+
+
+async def test_on_search_cancel_stale_seq_toast(monkeypatch):
+    """A Cancel button from a replaced search must not cancel the newer
+    one — it only toasts."""
+    monkeypatch.setattr(
+        search, "search_tracks", AsyncMock(return_value=[fake_track(0)])
+    )
+    update = make_update("starboy")
+    context = make_context()
+
+    await search.run_search(update, context, "starboy")
+    _seq, event = context.user_data[search.CANCEL_KEY]
+    assert not event.is_set()
+
+    stale = make_callback("srx:c:ffffffff")
+    await search.on_search_cancel(stale, context)
+
+    assert not event.is_set()  # the live search is untouched
+    assert (
+        stale.callback_query.answer.await_args.args[0] == STALE_SEARCH_CANCEL
+    )
+
+
+async def test_on_search_cancel_fresh_seq_sets_event():
+    event = asyncio.Event()
+    context = make_context()
+    context.user_data[search.CANCEL_KEY] = ("ab12cd34", event)
+
+    cb_update = make_callback("srx:c:ab12cd34")
+    await search.on_search_cancel(cb_update, context)
+
+    assert event.is_set()
+    # plain answer, no alert
+    assert cb_update.callback_query.answer.await_args.args == ()
 
 
 # --- track_keyboard ----------------------------------------------------------------

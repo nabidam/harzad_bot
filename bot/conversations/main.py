@@ -13,7 +13,11 @@ from bot.handlers.youtube import download as youtube_download, mp3 as youtube_mp
 from bot.handlers.ai import chat
 from bot.navigation import navigate
 from utils import shared_handlers
-from utils.constants.keyboards import SONG_ACTION_CALLBACK_PATTERN, YT_FMT_CALLBACK_PATTERN
+from utils.constants.keyboards import (
+    SEARCH_CANCEL_CALLBACK_PATTERN,
+    SONG_ACTION_CALLBACK_PATTERN,
+    YT_FMT_CALLBACK_PATTERN,
+)
 from utils.constants.states import (
     START_STATE,
     INSTAGRAM_STATE,
@@ -35,6 +39,12 @@ _media_url_filter = dispatch.MediaUrlFilter()
 _yt_format_cb = CallbackQueryHandler(dispatch.on_yt_format, pattern=YT_FMT_CALLBACK_PATTERN)
 _song_action_cb = CallbackQueryHandler(
     spotify_search.on_song_action, pattern=SONG_ACTION_CALLBACK_PATTERN
+)
+# Cancel button on the live search status message (2026-10-27 UX) —
+# pattern-matched, so it must sit with the other callbacks, before
+# navigate, in every state.
+_search_cancel_cb = CallbackQueryHandler(
+    spotify_search.on_search_cancel, pattern=SEARCH_CANCEL_CALLBACK_PATTERN
 )
 _link_handler = MessageHandler(_media_url_filter, dispatch.handle_link)
 
@@ -64,6 +74,7 @@ def main_conversation_handler():
             START_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -71,6 +82,7 @@ def main_conversation_handler():
             INSTAGRAM_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -78,6 +90,7 @@ def main_conversation_handler():
             INSTAGRAM_DOWNLOAD_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -86,6 +99,7 @@ def main_conversation_handler():
             MUSIC_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -97,6 +111,7 @@ def main_conversation_handler():
             MUSIC_SPOTIFY_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -105,6 +120,7 @@ def main_conversation_handler():
             PINTEREST_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -113,6 +129,7 @@ def main_conversation_handler():
             YOUTUBE_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -120,6 +137,7 @@ def main_conversation_handler():
             YOUTUBE_DOWNLOAD_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -128,6 +146,7 @@ def main_conversation_handler():
             YOUTUBE_MP3_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -136,6 +155,7 @@ def main_conversation_handler():
             AI_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,
@@ -143,6 +163,7 @@ def main_conversation_handler():
             AI_CHAT_STATE: [
                 _yt_format_cb,
                 _song_action_cb,
+                _search_cancel_cb,
                 CallbackQueryHandler(navigate),
                 _link_handler,
                 *shared_handlers.shared_handlers,

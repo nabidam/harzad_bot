@@ -303,3 +303,22 @@ Couldn't reach Spotify right now. Try again in a moment."""
 # CallbackQuery.answer texts are capped at 64 characters.
 SONG_EXPIRED: str = "Results expired — search again"
 NO_PREVIEW: str = "No 30s preview found for this track"
+STALE_SEARCH_CANCEL: str = "That search already finished"
+
+# Live search feedback (2026-10-27 UX): the status message shown while a
+# Spotify search runs — sent before the slow call, re-rendered with an
+# elapsed counter by live_status(). HTML parse mode; the query is escaped
+# before formatting.
+SEARCHING: str = """
+🔎 Searching for <b>{query}</b>
+⏳ <i>This can take a little while…</i>
+"""
+
+SEARCHING_TICK: str = """
+🔎 Searching for <b>{query}</b>
+⏳ <i>{elapsed}s and counting…</i>
+"""
+
+SEARCH_CANCELLED: str = """
+⏹️ Search cancelled. Send a new song name to start over.
+"""

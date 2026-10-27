@@ -26,7 +26,11 @@ from bot.handlers import inline as inline_query
 from bot.handlers.music.spotify import search as spotify_search
 from bot.navigation import NAVIGATOR, navigate
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
-from utils.constants.keyboards import SONG_ACTION_CALLBACK_PATTERN, YT_FMT_CALLBACK_PATTERN
+from utils.constants.keyboards import (
+    SEARCH_CANCEL_CALLBACK_PATTERN,
+    SONG_ACTION_CALLBACK_PATTERN,
+    YT_FMT_CALLBACK_PATTERN,
+)
 from utils.constants.messages import SOMETHING_WENT_WRONG
 from web.app import start_server
 
@@ -261,6 +265,12 @@ def register_handlers(application: Application) -> None:
     # must not swallow them.
     application.add_handler(
         CallbackQueryHandler(guard(spotify_search.on_song_action), pattern=SONG_ACTION_CALLBACK_PATTERN), group=1
+    )
+    # Live-search Cancel button (2026-10-27 UX): the status message is
+    # sent from the conversation, but a user without one (group-1
+    # dispatcher entry) also gets a status with a Cancel button.
+    application.add_handler(
+        CallbackQueryHandler(guard(spotify_search.on_search_cancel), pattern=SEARCH_CANCEL_CALLBACK_PATTERN), group=1
     )
     application.add_handler(CallbackQueryHandler(guard(handle_stray_callback)), group=1)
     application.add_error_handler(on_error)

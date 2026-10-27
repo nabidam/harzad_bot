@@ -295,12 +295,18 @@ def test_register_handlers_builds_tree():
             h for h in state_handlers
             if isinstance(h, CallbackQueryHandler) and h.callback is spotify_search.on_song_action
         )
+        cancel = next(
+            h for h in state_handlers
+            if isinstance(h, CallbackQueryHandler) and h.callback is spotify_search.on_search_cancel
+        )
         nav = next(
             h for h in state_handlers
             if isinstance(h, CallbackQueryHandler) and h.callback is navigate
         )
         assert state_handlers.index(fmt) < state_handlers.index(nav)
         assert state_handlers.index(song) < state_handlers.index(nav)
+        # the search Cancel button resolves in every state, too
+        assert state_handlers.index(cancel) < state_handlers.index(nav)
 
     group1 = app.handlers[1]
     # Group-1 fallback handlers are guard-wrapped (main._group1_guard);
@@ -320,6 +326,10 @@ def test_register_handlers_builds_tree():
         h for h in group1
         if isinstance(h, CallbackQueryHandler) and unwrap(h) is spotify_search.on_song_action
     )
+    cancel = next(
+        h for h in group1
+        if isinstance(h, CallbackQueryHandler) and unwrap(h) is spotify_search.on_search_cancel
+    )
     stray = next(
         h for h in group1
         if isinstance(h, CallbackQueryHandler) and unwrap(h) is main.handle_stray_callback
@@ -327,12 +337,13 @@ def test_register_handlers_builds_tree():
     # Every group-1 fallback must be guard-wrapped: PTB evaluates every
     # group for every update, so an unguarded copy double-fires for
     # users with an active conversation (live incident 2026-10-27).
-    for h in (link, fmt, song, stray):
+    for h in (link, fmt, song, cancel, stray):
         assert hasattr(h.callback, "_harzad_guarded"), f"unguarded group-1 handler {h.callback}"
     # first match in a group consumes the update: the specific handlers
     # must be registered before the catch-all
     assert group1.index(fmt) < group1.index(stray)
     assert group1.index(song) < group1.index(stray)
+    assert group1.index(cancel) < group1.index(stray)
 
     # inline query mode (plan 1.3) is registered in group 0
     from telegram.ext import InlineQueryHandler

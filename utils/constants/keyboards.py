@@ -27,6 +27,14 @@ YT_FMT_CALLBACK_PATTERN: str = r"^yt:fmt:(?:720|360|mp3)$"
 # Groups: (1) action, (2) candidate index.
 SONG_ACTION_CALLBACK_PATTERN: str = r"^song:(dl|lyr|prev):(\d+)$"
 
+# Live search status (2026-10-27 UX): the status message carries one
+# Cancel button. Its seq identifies the search's cancel token in
+# user_data["search_cancel"] — a stale button (newer search, restart)
+# gets a toast instead of cancelling anything.
+# Groups: (1) per-search token.
+SEARCH_CANCEL_BUTTON: str = "⏹️ Cancel"
+SEARCH_CANCEL_CALLBACK_PATTERN: str = r"^srx:c:([0-9a-f]{8})$"
+
 # main keyboards
 START_KEYBOARD: str = "START"
 FIRST_KEYBOARD: str = "First"
