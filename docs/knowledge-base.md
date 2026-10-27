@@ -101,15 +101,29 @@ shares PTB's asyncio loop and reuses the same `ExtBot` for chat delivery.
 
 Boot sequence (`main.py`):
 1. `init_logger(logs/harzad_bot_<timestamp>.log)`
-2. `create_requirement_folders()` (creates `./download` and `./login`)
-3. Build `Spotdl(client_id, client_secret, downloader_settings)` →
+2. **Single-instance lock**: non-blocking `flock` on `run/harzad_bot.lock`
+   (gitignored); on contention it logs the holder pid and `sys.exit(1)`.
+   Two processes polling one token = 409 Conflict storm + duplicate update
+   delivery (two fresh pollers' in-flight long-polls with overlapping offsets
+   can both receive the same update). Added after the 2026-10-27
+   double-listener incident. The fd is held in a module-level `_BOT_LOCK_FD`
+   for the process lifetime (closing the fd drops the lock).
+3. `create_requirement_folders()` (creates `./download` and `./login`)
+4. Build `Spotdl(client_id, client_secret, downloader_settings)` →
    `application.bot_data["spotdl_instance"]`. Note `yt_dlp_args` here hardcodes
    `--cookies {YT_COOKIE_FILE} --impersonate chrome --force-ipv4 --proxy {YT_PROXY}`.
-4. Builder: token, `post_init`, `connect_timeout(30)`, read/write/get-updates timeouts
+   Immediately after: `asyncio.set_event_loop(asyncio.new_event_loop())` —
+   spotdl's `Downloader.__init__` already did `set_event_loop(its own fresh
+   loop)` in the main thread, and PTB's `Application.__run` picks the main
+   thread's loop up via `get_event_loop()` and runs the whole bot on it —
+   that is what broke spotdl's sync download API (2026-10-27, §10.14). The
+   reset keeps the bot loop and spotdl's loop separate objects.
+5. Builder: token, `post_init`, `connect_timeout(30)`, read/write/get-updates timeouts
    50s. (No persistence — `PicklePersistence` commented out.)
-5. Handlers: `main_conversation_handler()` (group 0), `CallbackQueryHandler(answer_stray_callback)`
-   (group 1), `on_error` (error handler).
-6. `run_polling(bootstrap_retries=-1)` — retry forever through proxy outages.
+6. Handlers: `main_conversation_handler()` (group 0), `CallbackQueryHandler(answer_stray_callback)`
+   (group 1), `on_error` (error handler; distinguishes `update=None`
+   polling-layer errors — e.g. 409 Conflict — from handler errors).
+7. `run_polling(bootstrap_retries=-1)` — retry forever through proxy outages.
 
 `post_init` (runs in PTB's network-retry loop):
 - `set_my_commands` (/start, /help), `set_my_description`, `set_my_short_description`
@@ -176,7 +190,10 @@ back to `send_document` on any failure.
 
 **Spotify** (`music/spotify/download.py`): `spotdl_instance` from
 `context.application.bot_data` → `spotdl.search([url])` in a `ThreadPoolExecutor`
-→ per-track `spotdl.download(song)` → `send_audio(title=s.json["name"],
+(pure sync HTTP — no event loop involved) → per-track
+`await spotdl.downloader.pool_download(song)` — spotdl's async per-song unit,
+awaited directly on the running bot loop (never the sync `spotdl.download` —
+§6.5) → `send_audio(title=s.json["name"],
 performer=s.json["artist"], thumbnail=s.cover_url, duration)`. Missing
 `p`/`cover_url` → silently skipped (AssertionError swallowed). End: "All done 🥳".
 
@@ -365,6 +382,14 @@ Arch Linux container. Networking is the central constraint:
   (harness background shells get reaped; the 2026-10-26 OpenCode server restart reaped
   even the setsid group **and wiped /tmp** — watchdog/ncx had to be rebuilt from
   scratch; that's backlog item 1).
+- **/tmp is an 8 GB tmpfs — keep it lean** (2026-10-27 incident): a stuck
+  `pw-play -r` (local pipewire 1.6.9 build from last night's audio debugging)
+  held `/tmp/opencode/tone1k.wav` open for *writing* and grew it to 7.9 GB
+  over ~12 h, filling the tmpfs around 10:30 — ENOSPC broke every /tmp write
+  (shell heredocs, yt-dlp/ffmpeg temp files). Killed the process, deleted
+  the file. Check `df -h /tmp` before long work; find offenders with
+  `du -sh /tmp/opencode/* | sort -rh`. Root fs is also 95% full (9.6 G free
+  as of 2026-10-27).
 - **pkill footgun** (hit twice): always bracket the pattern
   (`pkill -f "python main[.]py"`); never combine pkill + relaunch in one command line
   — the relaunch line's own cmdline matches and kills the shell.
@@ -396,12 +421,23 @@ Arch Linux container. Networking is the central constraint:
    `llm.ainvoke([system, …])` → HTML-escaped reply (chat) / JSON (app).
 4. **IG**: session load (login/*.json) or login (2 attempts) → media pk from URL →
    info → type-based send (photo/video/album/story/pfp).
-5. **Spotify**: search in executor → per-track download in executor → send_audio.
-   The download thread must bind spotdl's internal loop first
-   (`asyncio.set_event_loop(spotdl.downloader.loop)` in
-   `download_from_spotify`) — spotdl 4.6's `asyncio.gather()` takes no loop
-   arg and Py3.12 has no current loop in a bare worker thread (crashed in
-   production 2026-10-27, fixed + regression-tested via the production path).
+5. **Spotify**: search in executor (pure sync HTTP) → per-track
+   `await spotdl.downloader.pool_download(song)` on the running bot loop →
+   send_audio. **Never** the sync spotdl download API: `Downloader.__init__`
+   does `set_event_loop(its loop)` in the main thread and PTB's `__run`
+   picks that loop up via `get_event_loop()` and runs the bot on it, so the
+   sync API's `run_until_complete` raises "This event loop is already
+   running" — and `asyncio.gather()` in `download_multiple_songs` schedules
+   the download task on the running loop *before* the check, so the song
+   downloads as an orphaned task (mp3 on disk, no sendAudio, user sees
+   "Something went wrong"). First crash 2026-10-27 09:48 (worker thread had
+   no current loop; the "fix" — binding spotdl's loop in the worker — only
+   moved the crash, because that loop *is* the bot's loop); second incident
+   10:03 (orphaned download + double instance). Root cause fixed 2026-10-27:
+   async API on the bot loop + main-thread loop reset in `main.py` +
+   single-instance lock. Regression tests in `tests/test_12_handlers.py`
+   (sync API raises, pool_download awaited on the running loop) and
+   re-verified live in `tests/test_15_live_features.py`.
 6. **Every handler**: `send_action` → `sync_user` (DB upsert) → `log_message`
    (DB insert) → logic.
 
@@ -489,6 +525,8 @@ Arch Linux container. Networking is the central constraint:
    code-ready but untestable until the admin fills those in.
 7. ~~Spotify download unverified~~ **Resolved 2026-10-26**: live spotdl 4.6.0
    search + download verified (`tests/test_15_live_features.py`, ~4 min run).
+   Re-verified 2026-10-27 after the loop-hijack fix (item 14, same live
+   test, ~3 min).
 8. ~~No tests anywhere; no CI.~~ **Resolved 2026-10-26**: `tests/` — 183
    unit/integration tests + 4 live tests; CI still none.
 9. **Pinterest live test needs a real pin URL** — Pinterest serves no
@@ -509,6 +547,26 @@ Arch Linux container. Networking is the central constraint:
    slash, so files land as `downloads/videos<Title>.mp4` (flat in
    `downloads/`, not in a `videos/` subdirectory). Both flows (chat + mini
    app) rely on it being consistent — it is (shared `YDL_OPTS`).
+14. ~~Spotify "not working again" + double listener (2026-10-27 10:01–10:03)~~
+    **Resolved 2026-10-27**: two problems compounded. (a) A second instance
+    (user's own `uv run python main.py`, 10:01:30) caused a 409 Conflict
+    storm and duplicate handling — update 743386062 was processed by BOTH
+    processes. (b) Independently, the Spotify handler crashed with
+    `RuntimeError: This event loop is already running`: spotdl's
+    `Downloader.__init__` does `set_event_loop(its fresh loop)` in the main
+    thread, and PTB's `Application.__run` runs the bot on that same loop via
+    `get_event_loop()`; the sync download API's `run_until_complete` hit the
+    running loop, and `asyncio.gather()` had already scheduled the download
+    task on it — the mp3 landed on disk as an orphan (no sendAudio; user saw
+    "Something went wrong" + 👎 while the download finished 20 s later).
+    Fix: handler awaits `downloader.pool_download` (spotdl's async per-song
+    unit, slow sync steps offloaded to the default executor) on the bot
+    loop; `main.py` resets the main thread's event loop right after Spotdl
+    init; single-instance `flock` on `run/harzad_bot.lock` — a second start
+    now exits with the holder's pid (also makes the watchdog's
+    pkill+relaunch fail-safe: surviving old instance ⇒ new one refuses
+    instead of double-listening). Side find same day: /tmp tmpfs 100% full
+    from a stuck `pw-play` tone file (killed + deleted; §5).
 
 ## 11. Test plan (for the "one by one" phase)
 

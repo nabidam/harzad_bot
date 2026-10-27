@@ -1,4 +1,6 @@
 # coding: utf-8
+import asyncio
+import fcntl
 import io
 import os
 import signal
@@ -122,7 +124,16 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     Without this, any exception (e.g. a DB outage) silently drops the update
     and the user never hears back. Log the full traceback, then tell the user.
     """
-    logger.error("Unhandled exception while handling update", exc_info=context.error)
+    # update is None for errors raised by the polling/updater layer itself
+    # (e.g. 409 Conflict while a second bot instance is running) — those are
+    # not tied to a user message, so only log them, without the misleading
+    # "handling update" label.
+    where = (
+        "while handling update"
+        if isinstance(update, Update)
+        else "in the polling layer (no update)"
+    )
+    logger.error("Unhandled exception %s", where, exc_info=context.error)
     if isinstance(update, Update) and update.effective_message is not None:
         try:
             await react_message(update, context.bot, "👎")
@@ -134,6 +145,33 @@ if __name__ == "__main__":
     now = datetime.now()
     strtime = now.strftime("%Y_%m_%d_%H_%M_%S")
     init_logger(f"logs/{settings.NAME}_{strtime}.log")
+
+    # Single-instance guard. Two processes polling the same token cause a
+    # 409 Conflict storm, and two fresh pollers can BOTH receive the same
+    # update (in-flight long-polls with overlapping offsets), so one user
+    # action gets handled twice — two downloads, two error messages, etc.
+    # (Incident: 2026-10-27, second instance started by hand.)
+    # First process to hold the lock wins; later starts exit.
+    lock_path = os.path.join(SCRIPT_DIR, "run", f"{settings.NAME}.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.lseek(lock_fd, 0, os.SEEK_SET)
+        holder = os.read(lock_fd, 128).decode("utf-8", "replace").strip()
+        logger.error(
+            "Another %s instance is already running (%s). "
+            "Refusing to start a second listener. Stop the first one first.",
+            settings.NAME, holder or "unknown holder",
+        )
+        sys.exit(1)
+    os.ftruncate(lock_fd, 0)
+    os.write(lock_fd, f"pid {os.getpid()}, started {strtime}".encode())
+    # Keep lock_fd referenced at module level for the process lifetime —
+    # the flock is released as soon as the fd is closed (a GC'd local would
+    # drop the lock and let a second instance start).
+    _BOT_LOCK_FD = lock_fd
 
     create_requirement_folders()
     # SpotifyClient.init(
@@ -159,6 +197,17 @@ if __name__ == "__main__":
         client_secret=SPOTIFY_CLIENT_SECRET,
         downloader_settings=downloader_settings
     )
+
+    # spotdl's Downloader.__init__ called asyncio.set_event_loop(its own
+    # fresh loop) in this thread. PTB's Application.__run picks the
+    # main thread's loop up via asyncio.get_event_loop() and runs the whole
+    # bot on it — which is what made spotdl's sync download API
+    # (run_until_complete on "its" loop) crash with "This event loop is
+    # already running" and orphan the download task (2026-10-27 10:03).
+    # Give this thread its own loop again so the bot loop and spotdl's loop
+    # are separate objects. The spotify handler drives spotdl only through
+    # its async API (downloader.pool_download) on the bot loop.
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
     # spotdl = create_spotdl_instance()
 

@@ -300,25 +300,41 @@ class TestSpotify:
 
         class FakeSpotdl:
             def __init__(self):
-                # download_from_spotify binds this loop in the worker
-                # thread (spotdl 4.6 requirement) — must be a real loop
+                # downloader.loop is the loop spotdl's SYNC api would run
+                # (run_until_complete). In production it IS the bot's own
+                # running loop (PTB picks it up after Downloader.__init__'s
+                # set_event_loop), which is exactly why the sync api must
+                # not be used — it crashed the bot on 2026-10-27.
                 self.downloader = SimpleNamespace(
-                    loop=asyncio.new_event_loop()
+                    loop=asyncio.new_event_loop(),
+                    pool_download=self._pool_download,
                 )
+                self.sync_download_calls = 0
+
+            async def _pool_download(self, song):
+                return FakeSong(), FakePath()
 
             def search(self, terms):
                 return [FakeSong()]
 
             def download(self, song):
-                return FakeSong(), FakePath()
+                self.sync_download_calls += 1
+                raise AssertionError(
+                    "sync spotdl.download() used — it runs run_until_complete "
+                    "on the bot's own running loop (2026-10-27 crash); "
+                    "await downloader.pool_download instead"
+                )
 
+        fake = FakeSpotdl()
         update = make_update("https://open.spotify.com/track/x", test_tg)
         context = make_context()
         # a real dict: MagicMock __setitem__ does not store values, so the
         # handler would see an empty mock and skip the whole download loop
-        context.application.bot_data = {"spotdl_instance": FakeSpotdl()}
+        context.application.bot_data = {"spotdl_instance": fake}
         result = await self.m.handler(update, context)
         assert result == self.m.MUSIC_SPOTIFY_STATE
+        # regression: the download must go through the async api
+        assert fake.sync_download_calls == 0
         sa = context.bot.send_audio
         sa.assert_awaited_once()
         kwargs = sa.await_args.kwargs
@@ -330,6 +346,61 @@ class TestSpotify:
         last = context.bot.send_message.await_args_list[-1].kwargs
         assert "reply_markup" in last
         context.bot.set_message_reaction.assert_awaited_once()  # 👍
+
+    async def test_download_awaited_on_running_loop_result_not_orphaned(
+        self, test_tg, tmp_path, monkeypatch
+    ):
+        """Regression (2026-10-27 10:03): spotdl's sync download API crashed
+        with RuntimeError("This event loop is already running") because PTB
+        runs the bot on the very loop spotdl claims as its own (its
+        Downloader.__init__ calls set_event_loop in the main thread, and
+        Application.__run picks it up via get_event_loop). On top of the
+        crash, asyncio.gather() inside download_multiple_songs scheduled the
+        download task on the running loop BEFORE run_until_complete checked,
+        so the song downloaded as an orphaned task: mp3 on disk, no
+        sendAudio, user left with "Something went wrong".
+
+        The handler must await the async api on the running loop so the
+        result comes straight back to the handler.
+        """
+        monkeypatch.setattr(self.m, "DOWNLOAD_MP3_PATH", str(tmp_path))
+        (tmp_path / "track.mp3").write_bytes(SMALL_MP3.read_bytes())
+
+        loops = []
+
+        class FakeSong:
+            cover_url = "http://cover/x.jpg"
+            json = {"name": "Track", "artist": "Artist"}
+            duration = 2000  # ms
+
+        class FakePath:
+            name = "track.mp3"
+
+        class FakeSpotdl:
+            def __init__(self):
+                self.downloader = SimpleNamespace(
+                    loop=asyncio.new_event_loop(),
+                    pool_download=self._pool_download,
+                )
+
+            async def _pool_download(self, song):
+                loops.append(asyncio.get_running_loop())
+                return FakeSong(), FakePath()
+
+            def search(self, terms):
+                return [FakeSong()]
+
+        update = make_update("https://open.spotify.com/track/x", test_tg)
+        context = make_context()
+        context.application.bot_data = {"spotdl_instance": FakeSpotdl()}
+        result = await self.m.handler(update, context)
+        assert result == self.m.MUSIC_SPOTIFY_STATE
+        # the download coroutine ran on the handler's own (running) loop —
+        # not in a worker thread with its own run_until_complete
+        assert loops, "downloader.pool_download was never awaited"
+        assert loops[0] is asyncio.get_running_loop()
+        # and the result reached the handler: the audio was actually sent
+        context.bot.send_audio.assert_awaited_once()
 
 
 # --- AI chat ---------------------------------------------------------------------------

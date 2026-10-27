@@ -64,11 +64,12 @@ def test_live_pinterest_download(proxy_env, monkeypatch):
 async def test_live_spotify_search_and_download(proxy_env, tmp_path):
     """Real Spotify search + download through the PRODUCTION code path.
 
-    The download goes via `await_download_from_spotify` — the same
-    run_in_executor wrapper the bot uses — because spotdl 4.6 needs a
-    current event loop in the worker thread (see the 2026-10-27 crash);
-    calling spotdl.download() from the main thread would pass here and
-    still crash in the bot.
+    The download goes via `await_download_from_spotify`, which — like the
+    bot — awaits spotdl's async API (downloader.pool_download) directly on
+    the running loop. spotdl's sync API must not be used: it calls
+    run_until_complete on the loop spotdl claims as its own, and PTB runs
+    the bot on exactly that loop, so it always raises "This event loop is
+    already running" (2026-10-27 crash).
     """
     from bot.handlers.music.spotify.download import await_download_from_spotify
     from configurations.settings import (

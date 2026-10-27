@@ -35,23 +35,27 @@ async def await_search_from_spotify(spotdl: Spotdl, term: str):
         result = await loop.run_in_executor(pool, search_term, spotdl, term)
     return result
 
-def download_from_spotify(spotdl: Spotdl, song: str):
-    # spotdl 4.6: download_multiple_songs() calls asyncio.gather(*tasks)
-    # WITHOUT a loop argument, so the tasks bind to the *current* event
-    # loop of the calling thread. Python 3.12 raises RuntimeError
-    # ("There is no current event loop in thread ...") in a bare
-    # run_in_executor worker thread — this crashed the live bot
-    # (2026-10-27). Bind the spotdl instance's own loop in this thread
-    # (this function always runs in one) so gather() and spotdl's
-    # internal run_until_complete() share exactly one loop.
-    asyncio.set_event_loop(spotdl.downloader.loop)
-    return spotdl.download(song)
+async def await_download_from_spotify(spotdl: Spotdl, song):
+    """Download one song by awaiting spotdl's async core on the running loop.
 
-async def await_download_from_spotify(spotdl: Spotdl, song: str):
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as pool:
-        result = await loop.run_in_executor(pool, download_from_spotify, spotdl, song)
-    return result
+    Never call spotdl's sync API (`spotdl.download`) from the bot: spotdl's
+    Downloader.__init__ does asyncio.set_event_loop(its own fresh loop) in
+    the main thread, and PTB's Application.__run picks that same loop up via
+    asyncio.get_event_loop() and runs the whole bot on it. The sync API then
+    calls loop.run_until_complete() on an already-running loop, raising
+    RuntimeError("This event loop is already running"). Worse, the
+    asyncio.gather() inside download_multiple_songs() schedules the download
+    task on the running loop *before* run_until_complete() checks, so the
+    song still downloads as an orphaned task: the mp3 lands on disk but the
+    (already dead) handler never sends it. (Incident: 2026-10-27 10:03.)
+
+    pool_download is spotdl's own per-song unit (semaphore +
+    async_search_and_download), and async_search_and_download offloads every
+    slow sync step (lyrics, yt-dlp search/download) to the default executor,
+    so awaiting it on the bot loop does not block polling.
+    """
+    return await spotdl.downloader.pool_download(song)
+
 
 @send_action(ChatAction.TYPING)
 @sync_user
