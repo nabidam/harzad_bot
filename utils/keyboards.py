@@ -113,6 +113,16 @@ def retry_home_keyboard(token: str) -> InlineKeyboardMarkup:
     ])
 
 
+def retry_tasks_home_keyboard(token: str) -> InlineKeyboardMarkup:
+    """[🔁 Retry] [📥 Tasks] [🏠 Home] — the temporary
+    platform/proxy failure layout (spec §7.2)."""
+    return InlineKeyboardMarkup([
+        [_button(copy.BTN_RETRY, f"task:retry:{token}"),
+         _button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
 def too_large_keyboard(link: str) -> InlineKeyboardMarkup:
     """[📋 Copy download link] [🏠 Home] [📥 Tasks] on the >50 MB card
     (spec §6.3/§6.6). The copy button is a CopyTextButton — it copies

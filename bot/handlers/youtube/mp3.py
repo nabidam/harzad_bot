@@ -82,6 +82,7 @@ def _mp3_worker(url: str, opts: dict, cancel_flag, push) -> dict:
                     item_result = {
                         "path": filename,
                         "title": item_title,
+                        "url": item.get("url") or item.get("webpage_url"),
                         "duration": int(len(audio) / 1000),
                         "size_mb": round(os.path.getsize(filename) / (1024 * 1024), 2),
                         "thumbnail_url": item.get("thumbnail"),

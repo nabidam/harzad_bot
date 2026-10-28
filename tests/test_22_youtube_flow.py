@@ -458,6 +458,67 @@ async def test_playlist_failed_item_counted_and_retryable(monkeypatch, tmp_path)
     }
 
 
+# --- single-item failure (spec §7.2) ---------------------------------------------
+
+async def test_single_video_download_failure_sends_service_card(
+        monkeypatch, tmp_path):
+    """Spec §7.2: a single video that fails to download gets the
+    temporary-service card with [Retry][Tasks][Home] — never the
+    success reaction on nothing, and the task ends FAILED (it cannot
+    be left running forever)."""
+    info = {"title": "T1", "ext": "mp4", "thumbnail": None}
+    patch_ydl(monkeypatch, yt_download, FakeYoutubeDL(
+        None, info, SMALL_MP4, tmp_path, error_items={"T1"},
+    ))
+    update = make_update(VIDEO_URL)
+    context = make_context()
+
+    await yt_download.run_video_download(update, context, VIDEO_URL)
+
+    assert context.bot.send_video.await_count == 0
+    context.status_message.delete.assert_not_awaited()
+    last = context.status_message.edit_text.await_args.kwargs
+    assert last["text"] == copy.ERROR_TEMPORARY_SERVICE.format(
+        platform="YouTube")
+    row = last["reply_markup"].inline_keyboard[0]
+    token = row[0].callback_data.removeprefix("task:retry:")
+    assert [b.callback_data for b in row] == [
+        f"task:retry:{token}", "nav:tasks", "nav:home"]
+
+    task = get_registry(context).get(token)
+    assert task.status == FAILED
+    # the input URL stays the safe replay payload (the fake item has no
+    # per-item url, so the rewrite keeps the original)
+    assert task.retry_payload == {"urls": [VIDEO_URL], "max_height": 720}
+
+
+async def test_single_video_delivery_failure_sends_unexpected_card(
+        monkeypatch, tmp_path):
+    """A failed Telegram send of the only video is an internal error
+    (spec §7.1 class 6): the unexpected-error card with [Retry][Home],
+    the task ends FAILED, and the exception does not propagate out of
+    the flow."""
+    from telegram.error import TelegramError
+    info = {"title": "T1", "ext": "mp4", "thumbnail": None}
+    patch_ydl(monkeypatch, yt_download,
+              FakeYoutubeDL(None, info, SMALL_MP4, tmp_path))
+    update = make_update(VIDEO_URL)
+    context = make_context()
+    context.bot.send_video = AsyncMock(
+        side_effect=TelegramError("fake send failure"))
+
+    await yt_download.run_video_download(update, context, VIDEO_URL)
+
+    context.status_message.delete.assert_not_awaited()
+    last = context.status_message.edit_text.await_args.kwargs
+    assert last["text"] == copy.ERROR_UNEXPECTED
+    row = last["reply_markup"].inline_keyboard[0]
+    token = row[0].callback_data.removeprefix("task:retry:")
+    assert [b.callback_data for b in row] == [
+        f"task:retry:{token}", "nav:home"]
+    assert get_registry(context).get(token).status == FAILED
+
+
 async def test_cancel_mid_playlist_stops_before_next_item(monkeypatch, tmp_path):
     """Spec §4.3: cancel during item 2's download keeps the delivered
     item 1, discards item 2 (the worker can't be interrupted inside a

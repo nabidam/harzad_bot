@@ -81,6 +81,7 @@ def _video_worker(url: str, opts: dict, cancel_flag, push) -> dict:
                     item_result = {
                         "path": filename,
                         "title": item_title,
+                        "url": item.get("url") or item.get("webpage_url"),
                         "duration": int(MutagenFile(filename).info.length),
                         "size_mb": round(file_size / (1024 * 1024), 2),
                         "thumbnail_url": item.get("thumbnail"),

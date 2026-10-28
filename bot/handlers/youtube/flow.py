@@ -109,6 +109,12 @@ def _cleanup_undelivered(outcome: dict, handled_paths: set) -> None:
             cleanup_media(item["path"])
 
 
+def _platform_name(kind: str) -> str:
+    """The user-facing platform word for a flow kind (error copy,
+    spec §7.2)."""
+    return "TikTok" if kind == "tiktok" else "YouTube"
+
+
 async def run_media_flow(
     update, context, *, url: str, kind: str, opts: dict,
     worker, deliver, max_height: int | None = None,
@@ -174,6 +180,7 @@ async def run_media_flow(
     delivered = 0
     linked = 0
     handled_paths: set[str] = set()
+    delivery_failed: list[dict] = []
 
     async def _on_event(event) -> None:
         nonlocal delivered, linked
@@ -197,14 +204,15 @@ async def run_media_flow(
             try:
                 result = await deliver(context, update, chat_id, item_result)
             except TelegramError:
-                # one failed Telegram send must not kill a playlist; a
-                # single item has no next step, so it is fatal there
+                # a failed Telegram send is a failed item, like a failed
+                # download: counted, retriable, never raised (the
+                # finalize step owns the terminal state, so the task
+                # can never be left running forever)
                 logger.warning("delivery failed for %r", item_result.get("title"),
                                exc_info=True)
-                if total and total > 1:
-                    task.touch(item_done=index, item_failed=task.item_failed + 1)
-                    return
-                raise
+                task.touch(item_done=index, item_failed=task.item_failed + 1)
+                delivery_failed.append(item_result)
+                return
             delivered += 1
             if result == "linked":
                 linked += 1
@@ -278,6 +286,14 @@ async def run_media_flow(
             pending.append(get_event)
         await asyncio.gather(*pending, return_exceptions=True)
 
+    # A delivery failure happens loop-side, where the worker's `failed`
+    # list cannot see it: merge it so the summary line and the retry
+    # payload count it too (spec §7.3).
+    if delivery_failed:
+        outcome["failed"].extend(
+            (item["title"], item.get("url")) for item in delivery_failed
+        )
+
     # --- finalize: the status message becomes the final answer ---------
     total = outcome.get("total")
     failed = outcome.get("failed") or []
@@ -299,14 +315,31 @@ async def run_media_flow(
             text = copy.TASK_CANCELLED.format(completed_count=delivered)
         await _set_status(status, text, keyboards.home_tasks_row_keyboard())
         registry.finish(task.token, CANCELLED, note=f"{delivered}/{total or 1}")
-    elif total == 1:
-        # no extra "all done" message (spec §4.2): the file is the answer
+    elif total == 1 and delivered:
+        # success: no extra "all done" message (spec §4.2) — the file
+        # is the answer
         await status.delete()
         await react_message(update, context.bot, "👍")
         registry.finish(
             task.token, DONE,
             note="link" if linked else "sent",
         )
+    elif total == 1:
+        # the single item never went out: the status becomes the
+        # failure card (spec §7.2) — a failed send is an internal
+        # error (class 6), a failed download a temporary service
+        # problem (class 3)
+        if delivery_failed:
+            await _set_status(status, copy.ERROR_UNEXPECTED,
+                              keyboards.retry_home_keyboard(task.token))
+        else:
+            await _set_status(
+                status,
+                copy.ERROR_TEMPORARY_SERVICE.format(
+                    platform=_platform_name(kind)),
+                keyboards.retry_tasks_home_keyboard(task.token),
+            )
+        registry.finish(task.token, FAILED, note=f"0/{total}")
     else:
         failure_line = (
             copy.TASK_PLAYLIST_FAILED_LINE.format(failed_count=len(failed))
