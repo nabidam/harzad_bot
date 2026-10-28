@@ -43,8 +43,15 @@ def _retry_players():
     module-level dict) so the flow modules are imported lazily: this
     module is imported very early in the app build, and the flows pull
     in the downloaders' dependencies."""
+    from bot.handlers.music.spotify import download as spotify_download
     from bot.handlers.youtube import download as yt_download
     from bot.handlers.youtube import mp3 as yt_mp3
+
+    async def play_spotify(update, context, payload):
+        for url in payload["urls"]:
+            await spotify_download.run_spotify_download(
+                update, context, url
+            )
 
     async def play_video(update, context, payload):
         for url in payload["urls"]:
@@ -65,6 +72,7 @@ def _retry_players():
             await yt_mp3.run_mp3_download(update, context, url)
 
     return {
+        "spotify": play_spotify,
         "youtube_video": play_video,
         "tiktok": play_tiktok,
         "youtube_mp3": play_mp3,

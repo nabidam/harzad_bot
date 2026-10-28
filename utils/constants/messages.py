@@ -218,18 +218,10 @@ Please send me the url of the post, story or reel you want to download.
 You can also send a username in the format <code>@username</code> to download their profile picture.
 """
 
-SPOTIFY_DOWNLOAD_PROGRESS: str = """
-Downloading track {current}/{total} 🎧
-"""
-
 SPOTIFY_INSTRUCTION: str = """
 Please send me the url of the song, album or playlist you want to download.
 
 Sometimes some songs in a playlist do not have a public link to download, so I can't download them for you, sorry for that.
-"""
-
-TASK_DONE: str = """
-All done 🥳
 """
 
 PINTEREST_INSTRUCTION: str = """
