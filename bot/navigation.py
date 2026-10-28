@@ -17,6 +17,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from utils import copy, keyboards
+from utils.ack import answer_callback
 from utils.constants.keyboards import (
     CB_AI,
     CB_AI_CHAT,
@@ -95,7 +96,7 @@ async def on_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cq = update.callback_query
     if cq is None:
         return None
-    await cq.answer()
+    await answer_callback(cq)
     screen = (cq.data or "").split(":", 2)[2]
     state = BACK_DESTINATION.get(screen, HOME_STATE)
     await _show_screen(update, context, home_text(update), keyboards.home_keyboard)
@@ -111,7 +112,7 @@ async def on_ai_tti_stale(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cq = update.callback_query
     if cq is None:
         return None
-    await cq.answer(copy.TOAST_IMAGE_GEN_UNAVAILABLE)
+    await answer_callback(cq, copy.TOAST_IMAGE_GEN_UNAVAILABLE)
     return None
 
 
@@ -143,7 +144,7 @@ async def navigate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return None
 
     # Acknowledge the click so the client spinner stops immediately.
-    await cq.answer()
+    await answer_callback(cq)
 
     item = NAVIGATOR.get(cq.data or "")
     if item is None:

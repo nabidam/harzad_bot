@@ -25,6 +25,7 @@ from telegram.error import TelegramError
 from connectors.preview import resolve_preview_url
 from connectors.spotify_search import TrackResult, format_duration, search_tracks
 from utils import copy, executor, keyboards, progress
+from utils.ack import answer_callback
 from utils.constants.keyboards import (
     SONG_ACTION_CALLBACK_PATTERN,
     SONG_ACTION_LEGACY_PATTERN,
@@ -363,10 +364,10 @@ async def on_search_cancel(update: Update, context: MyContext):
 
     entry = context.user_data.get(CANCEL_KEY)
     if not entry or entry[0] != seq:
-        await cq.answer(copy.TOAST_SEARCH_CANCEL_STALE)
+        await answer_callback(cq, copy.TOAST_SEARCH_CANCEL_STALE)
         return
     entry[1].set()
-    await cq.answer()
+    await answer_callback(cq)
 
 
 async def on_song_action(update: Update, context: MyContext):
@@ -389,7 +390,7 @@ async def on_song_action(update: Update, context: MyContext):
     if entry is None:
         # expired after 300 s, unknown, or the process restarted
         # (the store is in-memory, spec §2.5)
-        await cq.answer(copy.TOAST_SEARCH_STALE)
+        await answer_callback(cq, copy.TOAST_SEARCH_STALE)
         return
     tracks = entry["tracks"]
 
@@ -401,12 +402,12 @@ async def on_song_action(update: Update, context: MyContext):
         if not 1 <= index <= len(tracks):
             # a token can only point at its own result set; an out-of-
             # range index is stale by construction
-            await cq.answer(copy.TOAST_SEARCH_STALE)
+            await answer_callback(cq, copy.TOAST_SEARCH_STALE)
             return
         track = tracks[index - 1]
 
     if action == "dl":
-        await cq.answer()
+        await answer_callback(cq)
         await spotify_download.run_spotify_download(
             update, context, track.spotify_url
         )
@@ -416,10 +417,10 @@ async def on_song_action(update: Update, context: MyContext):
         # only rendered on indexed (in-chat) cards
         new_index = index + (1 if action == "next" else -1)
         if new_index < 1:
-            await cq.answer(copy.TOAST_TRACK_FIRST)
+            await answer_callback(cq, copy.TOAST_TRACK_FIRST)
             return
         if new_index > len(tracks):
-            await cq.answer(copy.TOAST_TRACK_LAST)
+            await answer_callback(cq, copy.TOAST_TRACK_LAST)
             return
         await _edit_card(cq, context, token, new_index, len(tracks))
 
@@ -433,7 +434,7 @@ async def on_song_action_legacy(update: Update, context: MyContext):
     """
     cq = update.callback_query
     assert cq is not None
-    await cq.answer(copy.TOAST_SEARCH_STALE)
+    await answer_callback(cq, copy.TOAST_SEARCH_STALE)
 
 
 async def on_search_again(update: Update, context: MyContext):
@@ -445,9 +446,9 @@ async def on_search_again(update: Update, context: MyContext):
     assert match is not None  # the handler's pattern guarantees this
     entry = get_token_store(context, RESULTS_STORE).get(match.group(1))
     if entry is None:
-        await cq.answer(copy.TOAST_SEARCH_STALE)
+        await answer_callback(cq, copy.TOAST_SEARCH_STALE)
         return
-    await cq.answer()
+    await answer_callback(cq)
     await run_search(update, context, entry["query"])
 
 
@@ -476,9 +477,9 @@ async def _send_preview(
     if not url:
         url = await resolve_preview_url(track.title, track.artist)
     if not url:
-        await cq.answer(copy.TOAST_TRACK_NO_PREVIEW)
+        await answer_callback(cq, copy.TOAST_TRACK_NO_PREVIEW)
         return
-    await cq.answer()
+    await answer_callback(cq)
     await context.bot.send_audio(
         chat_id=update.effective_chat.id,
         audio=url,

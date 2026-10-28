@@ -393,3 +393,54 @@ async def test_cancel_command_several_tasks_opens_tasks_view():
     # neither task was cancelled: /cancel guessed nothing
     assert all(not t.cancel_event.is_set()
                for t in registry._tasks.values())
+
+
+# --- stale callback answers (spec §16, incident 2026-10-28 21:40) ------------------
+
+STALE_QUERY = (
+    "Query is too old and response timeout expired or query id is invalid"
+)
+
+
+async def test_stale_answer_never_raises():
+    """A tap delivered after Telegram's ~10 s answer window cannot be
+    answered: the BadRequest is swallowed (a property of the tap's
+    age, not of the action) and the caller proceeds."""
+    from telegram.error import BadRequest
+
+    from utils import ack
+
+    cq = MagicMock()
+    cq.answer = AsyncMock(side_effect=BadRequest(STALE_QUERY))
+
+    assert await ack.answer_callback(cq) is False
+    assert await ack.answer_callback(cq, "toast") is False
+
+
+async def test_fresh_answer_still_goes():
+    from utils import ack
+
+    cq = MagicMock()
+    cq.answer = AsyncMock()
+
+    assert await ack.answer_callback(cq, "hi") is True
+    cq.answer.assert_awaited_once_with("hi")
+
+
+async def test_stale_nav_tasks_tap_still_renders_view():
+    """The 2026-10-28 21:40 incident: two 📥 Tasks taps queued behind
+    an 88 s download handler were processed after the answer window.
+    The unguarded cq.answer() raised BadRequest into the class-6 error
+    handler and the user got two "Something went wrong" cards. A stale
+    tap now still renders the Tasks view and nothing else."""
+    from telegram.error import BadRequest
+
+    context = make_context()
+    update = make_callback("nav:tasks")
+    update.callback_query.answer = AsyncMock(
+        side_effect=BadRequest(STALE_QUERY))
+
+    await tasks.on_tasks_callback(update, context)  # must not raise
+
+    update.callback_query.message.edit_text.assert_awaited_once()
+    context.bot.send_message.assert_not_awaited()

@@ -23,6 +23,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes, filters
 
 from utils import copy, keyboards, link_detect, tokens
+from utils.ack import answer_callback
 from utils.constants.keyboards import YT_FMT_CALLBACK_PATTERN
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
@@ -145,11 +146,11 @@ async def on_yt_format(update: Update, context: MyContext):
     url = store.get(token)
     if url is None:
         # stale button (expired, restarted, or already selected)
-        await cq.answer(copy.TOAST_YT_STALE)
+        await answer_callback(cq, copy.TOAST_YT_STALE)
         return
     store.drop(token)  # single use
 
-    await cq.answer()
+    await answer_callback(cq)
     if fmt == "720":
         await youtube_download.run_video_download(update, context, url, max_height=720)
     elif fmt == "360":
@@ -166,7 +167,7 @@ async def on_yt_cancel(update: Update, context: MyContext):
     token = (cq.data or "").split(":")[-1]
     store = tokens.get_token_store(context, "yt_pickers")
     store.drop(token)
-    await cq.answer()
+    await answer_callback(cq)
     if cq.message is not None:
         try:
             await cq.message.edit_text("Cancelled.")
@@ -181,4 +182,4 @@ async def on_yt_format_legacy(update: Update, context: MyContext):
     cq = update.callback_query
     if cq is None:
         return None
-    await cq.answer(copy.TOAST_YT_STALE)
+    await answer_callback(cq, copy.TOAST_YT_STALE)

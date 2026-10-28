@@ -25,6 +25,7 @@ from bot.handlers import callbacks, dispatch
 from bot.handlers import inline as inline_query
 from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
 from utils import copy, keyboards
+from utils.ack import answer_callback
 from web.app import start_server
 
 import configurations.settings as settings
@@ -144,7 +145,7 @@ async def handle_stray_callback(update: Update, context: ContextTypes.DEFAULT_TY
     cq = update.callback_query
     if cq is None:
         return
-    await cq.answer()
+    await answer_callback(cq)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):

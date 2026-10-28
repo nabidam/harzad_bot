@@ -17,6 +17,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from utils import copy, keyboards
+from utils.ack import answer_callback
 from utils.constants.keyboards import (
     TASK_CANCEL_CALLBACK_PATTERN,
     TASK_PAGE_CALLBACK_PATTERN,
@@ -206,7 +207,7 @@ async def on_tasks_callback(update: Update, context: MyContext):
     cq = update.callback_query
     if cq is None:
         return None
-    await cq.answer()
+    await answer_callback(cq)
     await render_tasks(update, context)
     return None
 
@@ -221,7 +222,7 @@ async def on_task_page(update: Update, context: MyContext):
         return None
     match = re.match(TASK_PAGE_CALLBACK_PATTERN, cq.data or "")
     assert match is not None
-    await cq.answer()
+    await answer_callback(cq)
     await render_tasks(update, context, page=int(match.group(1)))
     return None
 
@@ -253,14 +254,14 @@ async def on_task_cancel(update: Update, context: MyContext):
     registry = get_registry(context)
     task = registry.get(token)
     if task is None or not task.is_active():
-        await cq.answer(copy.TOAST_TASK_STALE)
+        await answer_callback(cq, copy.TOAST_TASK_STALE)
         return
     assert update.effective_user is not None
     if task.owner_user_id != update.effective_user.id:
         # private task action: never cancel someone else's work
-        await cq.answer(copy.TOAST_TASK_STALE)
+        await answer_callback(cq, copy.TOAST_TASK_STALE)
         return
-    await cq.answer()
+    await answer_callback(cq)
     _cancel_task(task, update, context)
 
 
@@ -283,17 +284,17 @@ async def on_task_retry(update: Update, context: MyContext):
     registry = get_registry(context)
     task = registry.get(token)
     if task is None or task.is_active():
-        await cq.answer(copy.TOAST_TASK_STALE)
+        await answer_callback(cq, copy.TOAST_TASK_STALE)
         return
     assert update.effective_user is not None
     if task.owner_user_id != update.effective_user.id:
-        await cq.answer(copy.TOAST_TASK_STALE)
+        await answer_callback(cq, copy.TOAST_TASK_STALE)
         return
 
     payload = task.retry_payload
     player = _retry_players().get(task.kind)
     if player is None or not payload:
-        await cq.answer()
+        await answer_callback(cq)
         await cq.message.reply_text(
             copy.ERROR_RESTART,
             parse_mode=ParseMode.HTML,
@@ -301,7 +302,7 @@ async def on_task_retry(update: Update, context: MyContext):
         )
         return
 
-    await cq.answer()
+    await answer_callback(cq)
     # Awaiting the replay mirrors on_yt_format: the callback is already
     # answered (no spinner), and PTB processes other updates
     # concurrently while this handler coroutine runs the re-download.

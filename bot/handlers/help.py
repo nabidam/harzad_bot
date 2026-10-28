@@ -4,6 +4,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
 from utils import copy, keyboards
+from utils.ack import answer_callback
 
 from utils.decorators import send_action, sync_user, log_message
 from utils.helpers import send_html_msg
@@ -30,7 +31,7 @@ async def on_help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cq = update.callback_query
     if cq is None:
         return None
-    await cq.answer()
+    await answer_callback(cq)
     assert update.effective_chat is not None
     if cq.message is not None:
         try:
