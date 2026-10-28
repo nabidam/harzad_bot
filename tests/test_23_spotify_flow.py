@@ -368,6 +368,33 @@ async def test_cancel_during_resolve(tmp_path):
     assert registry.get(_status_token(context)).status == CANCELLED
 
 
+async def test_cancel_slow_resolve_does_not_block_loop(tmp_path):
+    """A cancel mid-resolve must not join the worker on the loop thread.
+
+    The old `with ThreadPoolExecutor()` shut down with wait=True in
+    __exit__ — a cancel during a slow resolve froze the whole bot until
+    the worker's network call returned (44 s in the 2026-10-28
+    incident). The worker is now detached: the cancel finalises
+    immediately and the late result is simply discarded."""
+    fake = FakeSpotdl([make_song("T1")], tmp_path, slow_resolve=3.0)
+    context = make_context(fake)
+    update = make_update(TRACK_URL)
+
+    run = asyncio.create_task(
+        download.run_spotify_download(update, context, TRACK_URL)
+    )
+    registry = get_registry(context)
+    await _wait_for(lambda: registry.all_active())
+    tasks._cancel_task(registry.all_active()[0], update, context)
+
+    # the flow finalises the cancel well before the (3 s) worker
+    # returns — no join on the loop thread
+    await asyncio.wait_for(run, timeout=2.0)
+
+    assert registry.get(_status_token(context)).status == CANCELLED
+    context.bot.send_audio.assert_not_awaited()
+
+
 async def test_cancel_mid_playlist_discards_in_flight_item(tmp_path):
     """Spec §4.3: cancel during item 2's download keeps the delivered
     item 1, shows the honest 'requested' state, then discards item 2
@@ -428,6 +455,27 @@ async def test_resolve_timeout_guard(tmp_path, monkeypatch):
     task = get_registry(context).get(token)
     assert task.status == FAILED
     assert task.note == "resolve timeout"
+
+
+async def test_resolve_finishing_in_grace_is_honoured(tmp_path, monkeypatch):
+    """A resolve that finishes during the post-timeout grace is
+    honoured, never discarded at the guard line (incident 2026-10-28
+    21:39: a 44 s healthy resolve + a 44 s process stop made the local
+    timer expire on work that was already done)."""
+    monkeypatch.setattr(download, "RESOLVE_TIMEOUT_SECONDS", 0.5)
+    songs = [make_song("T1")]
+    # the worker answers at ~0.55 s: after the 0.5 s guard, inside the
+    # 0.1 s grace
+    fake = FakeSpotdl(songs, tmp_path, slow_resolve=0.55)
+    context = make_context(fake)
+    update = make_update(TRACK_URL)
+
+    await download.run_spotify_download(update, context, TRACK_URL)
+
+    context.bot.send_audio.assert_awaited_once()
+    task = get_registry(context).get(_status_token(context))
+    assert task.status == DONE
+    assert task.note == "sent"
 
 
 async def test_resolve_failure_temporary_card(tmp_path):

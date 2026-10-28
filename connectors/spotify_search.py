@@ -8,12 +8,12 @@ search call returns up to 100 ranked track items; we keep the top few.
 The free backend items carry no `preview_url` (a Spotify-licensed
 field), so 30s previews come from the iTunes fallback (plan 1.4).
 """
-import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Optional
+
+from utils.executor import DetachedWorker
 
 logger = getLogger(__name__)
 
@@ -79,9 +79,11 @@ async def search_tracks(term: str) -> list[TrackResult]:
     if hit is not None and now - hit[0] < CACHE_TTL_SECONDS:
         return hit[1]
 
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as pool:
-        results = await loop.run_in_executor(pool, _raw_search, term)
+    # Detached worker (utils.executor): a cancel mid-search must not
+    # join the worker on the loop thread (a slow free-API search would
+    # freeze the bot for its remainder).
+    worker = DetachedWorker(_raw_search, term)
+    results = await worker.fut
     _cache[key] = (now, results)
     return results
 

@@ -24,7 +24,7 @@ from telegram.error import TelegramError
 
 from connectors.preview import resolve_preview_url
 from connectors.spotify_search import TrackResult, format_duration, search_tracks
-from utils import copy, keyboards, progress
+from utils import copy, executor, keyboards, progress
 from utils.constants.keyboards import (
     SONG_ACTION_CALLBACK_PATTERN,
     SONG_ACTION_LEGACY_PATTERN,
@@ -280,7 +280,10 @@ async def _await_search_or_cancel(
     discarded (the copy must never claim the backend stopped). If the
     search lands on the same tick as the other two, the finished
     search wins (the work is done; don't throw it away). An explicit
-    Cancel beat by the user takes precedence over the guard.
+    Cancel beat by the user takes precedence over the guard. A search
+    that finished while the process was STOPPED across the guard line
+    also wins — the post-timeout grace (utils.executor, incident
+    2026-10-28 21:39) lets it land before the timeout is declared.
     """
     if timeout_seconds is None:
         timeout_seconds = SEARCH_TIMEOUT_SECONDS
@@ -305,6 +308,22 @@ async def _await_search_or_cancel(
     search_done = search_task.done()
     cancelled = not search_done and cancel_task in done
     timed_out = not search_done and not cancelled and timeout_task in done
+
+    if timed_out:
+        # The guard may have expired while the process was stopped
+        # (SIGSTOP / cgroup freeze / host suspend): the search worker
+        # had already finished, and on resume the timer beat the
+        # delivery. The grace lets a finished search land — finished
+        # work is never discarded at the guard line (incident
+        # 2026-10-28 21:39).
+        if await executor.grace_done(search_task.done):
+            logger.info(
+                "Spotify search for %r finished during the post-timeout "
+                "grace (the process was likely stopped across the guard); "
+                "honouring the result", query,
+            )
+            timed_out = False
+
     for task in (search_task, cancel_task, timeout_task):
         if not task.done():
             task.cancel()

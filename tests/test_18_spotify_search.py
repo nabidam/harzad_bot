@@ -503,6 +503,30 @@ async def test_run_search_times_out_with_retry_card(monkeypatch):
     assert entry["tracks"] == []
 
 
+async def test_search_finishing_in_grace_is_honoured(monkeypatch):
+    """A search that finishes during the post-timeout grace (a process
+    stop across the guard line: the local timer expired while the
+    worker had already returned) still delivers the card — finished
+    work is never discarded at the guard line (incident 2026-10-28
+    21:39)."""
+    monkeypatch.setattr(search, "SEARCH_TIMEOUT_SECONDS", 0.5)
+
+    async def late_search(term):
+        # answers at ~0.55 s: after the 0.5 s guard, inside the 0.1 s
+        # grace
+        await asyncio.sleep(0.55)
+        return [fake_track(0)]
+
+    monkeypatch.setattr(search, "search_tracks", late_search)
+    update = make_update("starboy")
+    context = make_context()
+
+    await search.run_search(update, context, "starboy")
+
+    context.bot.send_photo.assert_awaited_once()  # the card went out
+    context.status_message.delete.assert_awaited_once()
+
+
 async def test_search_timeout_retry_reruns_the_query(monkeypatch):
     """[Search again] on the timeout card re-runs the same query — the
     search:again path, so the 300 s stale rule applies to it too."""

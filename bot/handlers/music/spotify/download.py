@@ -11,6 +11,13 @@ yt-dlp step run in worker threads that cannot be killed, so a cancel
 stops items that have not started yet; an in-flight track that finishes
 after the cancel is discarded, not sent, and the final count says so.
 
+The 45 s resolve guard (spec §4.4) carries a post-timeout grace (see
+utils.executor): a process stop (SIGSTOP / cgroup freeze) expires the
+local timer while the worker has already finished, and on resume the
+finished result is honoured instead of discarded (incident
+2026-10-28 21:39 — a 44 s healthy resolve + a 44 s process stop made
+the guard fire on work that was already done).
+
 The status message is one per task (spec §4.2): the accepted line at
 t=0 with [⏹ Cancel download] [📥 Tasks], the per-track download line at
 each item boundary, and the slow/still-working copy at the 30/60 s
@@ -18,14 +25,13 @@ measured thresholds of the download phase — never a fake progress bar.
 """
 import asyncio
 import validators
-from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 
-from utils import copy, keyboards, progress
+from utils import copy, executor, keyboards, progress
 from utils.constants.states import SEARCH_INPUT_STATE
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
@@ -50,11 +56,11 @@ def search_term(spotdl: Spotdl, term: str):
     return songs
 
 
-async def await_search_from_spotify(spotdl: Spotdl, term: str):
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as pool:
-        result = await loop.run_in_executor(pool, search_term, spotdl, term)
-    return result
+def _submit_resolve(spotdl: Spotdl, url: str):
+    """Submit the blocking spotdl.search to a detached worker thread
+    (utils.executor: never joined on the loop thread) and return the
+    worker, whose `done()` the timeout grace checks."""
+    return executor.DetachedWorker(search_term, spotdl, url)
 
 
 async def await_download_from_spotify(spotdl: Spotdl, song):
@@ -126,35 +132,54 @@ async def _await_resolve_or_cancel(
     a worker thread that cannot be killed: cancelling or timing out stops
     the WAIT and discards any late result — the copy never claims the
     backend stopped. A finished resolve wins a same-tick race (the work
-    is done); an explicit Cancel beats the guard.
+    is done); it also wins a race lost only because the process was
+    stopped across the guard line (the post-timeout grace, incident
+    2026-10-28 21:39). An explicit Cancel beats the guard.
     """
     if timeout_seconds is None:
         timeout_seconds = RESOLVE_TIMEOUT_SECONDS
-    resolve_task = asyncio.create_task(await_search_from_spotify(spotdl, url))
+    worker = _submit_resolve(spotdl, url)
+    resolve_fut = worker.fut
     cancel_task = asyncio.create_task(cancel_event.wait())
     timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
     try:
         done, _pending = await asyncio.wait(
-            {resolve_task, cancel_task, timeout_task},
+            {resolve_fut, cancel_task, timeout_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
     except asyncio.CancelledError:
         # the whole handler was torn down (shutdown) — take all three
-        for task in (resolve_task, cancel_task, timeout_task):
+        for task in (resolve_fut, cancel_task, timeout_task):
             task.cancel()
         await asyncio.gather(
-            resolve_task, cancel_task, timeout_task, return_exceptions=True
+            resolve_fut, cancel_task, timeout_task, return_exceptions=True
         )
         raise
 
-    resolve_done = resolve_task.done()
+    resolve_done = resolve_fut.done()
     cancelled = not resolve_done and cancel_task in done
     timed_out = not resolve_done and not cancelled and timeout_task in done
-    for task in (resolve_task, cancel_task, timeout_task):
+
+    if timed_out:
+        # The guard may have expired while the process was stopped
+        # (SIGSTOP / cgroup freeze / host suspend): the worker had
+        # already finished, and on resume the timer beat the delivery.
+        # The grace lets a finished worker land — finished work is
+        # never discarded at the guard line (incident 2026-10-28
+        # 21:39: a 44 s healthy resolve + a 44 s process stop).
+        if await worker.post_timeout_done():
+            logger.info(
+                "Spotify resolve for %r finished during the post-timeout "
+                "grace (the process was likely stopped across the guard); "
+                "honouring the result", url,
+            )
+            timed_out = False
+
+    for task in (resolve_fut, cancel_task, timeout_task):
         if not task.done():
             task.cancel()
     await asyncio.gather(
-        resolve_task, cancel_task, timeout_task, return_exceptions=True
+        resolve_fut, cancel_task, timeout_task, return_exceptions=True
     )
 
     if cancelled:
@@ -165,7 +190,7 @@ async def _await_resolve_or_cancel(
         )
         return False, True, None, False
     try:
-        return False, False, resolve_task.result(), False
+        return False, False, worker.result(), False
     except Exception:
         logger.warning("Spotify resolve failed for %r", url, exc_info=True)
         return False, False, None, True
