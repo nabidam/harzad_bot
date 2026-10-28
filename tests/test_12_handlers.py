@@ -70,32 +70,9 @@ def make_context():
 
 
 # --- Pinterest ----------------------------------------------------------------------
-
-@pytest.mark.usefixtures("test_tg")
-class TestPinterest:
-    def setup_method(self, method):
-        import bot.handlers.pinterest.download as m
-
-        self.m = m
-
-    async def test_back_button(self, test_tg):
-        update = make_update("Back 🔙", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.INSTAGRAM_STATE
-        update.message.reply_text.assert_awaited_once()
-
-    async def test_invalid_url(self, test_tg):
-        from utils.constants.messages import INVALID_PINTEREST_URL
-
-        update = make_update("https://example.com/not-pinterest", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.PINTEREST_STATE
-        kwargs = context.bot.editMessageText.await_args.kwargs
-        assert kwargs["text"] == INVALID_PINTEREST_URL
-        assert kwargs["parse_mode"] == "HTML"
-        context.bot.set_message_reaction.assert_awaited_once()  # 👎
+# The legacy Pinterest handler tests lived here; the handler body was
+# removed in step 8 (the input screen is bot/handlers/pinterest/main.py,
+# the download flow is pinned in tests/test_24_ig_pinterest_flow.py).
 
 
 # --- Spotify --------------------------------------------------------------------------

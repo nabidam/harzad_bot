@@ -1,154 +1,67 @@
-import validators
-import re
+"""Pinterest download (UX redesign §6.4) — pin video links.
+
+Entry: a Pinterest URL pasted anywhere (the universal dispatcher runs
+first in every state) or after choosing Pinterest; the input screen
+itself lives in main.py.
+
+The download REUSES the shared video engine (spec §6.4: "reuse the
+video-engine timeout guard until Pinterest-specific latency has been
+measured"): one yt-dlp worker thread (resolve + download to staging),
+one status message on the Pinterest wait copy, honest cancellation at
+item boundaries, the >50 MB direct-link card (spec §6.6), and the
+single-item failure card (spec §7.2).
+"""
 from logging import getLogger
 
 from telegram import Update
-from telegram.ext import ContextTypes
-from telegram.constants import ChatAction, ParseMode
+
 from configurations.settings import DOWNLOAD_VIDEO_PATH
-from utils.constants import *
-from utils.constants.keyboards import BACK_KEYBOARD
-from utils.constants.messages import BOT_ID, DOWNLOADING_VIDEO, GETTING_MEDIA_INFORMATION, GETTING_PROFILE_INFORMATION, GETTING_STORY_INFORMATION, INVALID_PINTEREST_URL, LINK_IS_INVALID, MEDIA_CAPTION, MEDIA_NOT_FOUND, PROCESSING, SENDING_THUMBNAIL, SENDING_VIDEO, SOMETHING_WENT_WRONG, USER_NOT_FOUND_CHECK_USERNAME_AND_TRY_AGAIN
-from utils.constants.states import INSTAGRAM_DOWNLOAD_STATE, INSTAGRAM_STATE, PINTEREST_STATE
+from utils import copy, keyboards
+from utils.custom_context import MyContext
 
-from utils.decorators import send_action, sync_user, log_message
-from utils.exceptions.instagram import LoginException
-from utils import keyboards
-from utils.helpers import react_message
-from utils.storage import cleanup_media
-
-from instagrapi.exceptions import MediaNotFound
-from instagrapi.exceptions import UnknownError
-from instagrapi.exceptions import UserNotFound
-
-from utils.instagram import get_user_client_instagram
-
-from mutagen import File as MutagenFile
-from yt_dlp import YoutubeDL, utils
+from bot.handlers.youtube import download as yt_download
+from bot.handlers.youtube import flow
 
 # Init logger
 logger = getLogger(__name__)
 
-ydl_opts = {
-    'format': 'bestvideo[ext=mp4]+bestaudio/best',
-    'outtmpl': DOWNLOAD_VIDEO_PATH + '%(title)s.%(ext)s',
-    # 'writethumbnail': True,
-    # 'postprocessors': [{
-    #     'key': 'FFmpegExtractAudio',
-    #     'preferredcodec': 'mp3',
-    #     'preferredquality': '192',
-    # }]
-}
 
-async def run_pinterest_download(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-    """Core Pinterest flow (yt-dlp), shared by the menu state handler and
-    the universal link dispatcher (plan 1.1). `text` is the raw user
-    message; non-pin URLs get the invalid-link reply."""
-    message = text
-    message_is_url = validators.url(message) # type: ignore
-    message_is_pinterest = PINTEREST_SEGMENT in message
+def _pinterest_opts() -> dict:
+    return {
+        'format': 'bestvideo[ext=mp4]+bestaudio/best',
+        'outtmpl': DOWNLOAD_VIDEO_PATH + '%(title)s.%(ext)s',
+    }
 
-    assert update.effective_chat is not None
-    assert update.effective_message is not None
-    assert update.effective_user is not None
 
-    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
-    bot_message = await context.bot.send_message(chat_id=update.message.chat_id, text=PROCESSING)
-
-    if message_is_url and message_is_pinterest:
-        with YoutubeDL(ydl_opts) as ydl:
-            await context.bot.editMessageText(
-                message_id=bot_message.message_id,
-                chat_id=update.message.chat_id,
-                text=GETTING_MEDIA_INFORMATION,
-            )
-
-            try:
-                info_dict = ydl.extract_info(message, download=False)
-            except utils.DownloadError:
-                await react_message(update, context.bot, "👎")
-                await context.bot.editMessageText(
-                    message_id=bot_message.message_id,
-                    chat_id=update.message.chat_id,
-                    text=SOMETHING_WENT_WRONG,
-                )
-                return PINTEREST_STATE
-            
-            title = info_dict.get('title')
-            ext = info_dict.get('ext')
-
-            await context.bot.editMessageText(
-                message_id=bot_message.message_id,
-                chat_id=update.message.chat_id,
-                text=DOWNLOADING_VIDEO,
-            )
-
-            try:
-                ydl.download([message])
-                
-                ydl.process_info(info_dict)
-                title = info_dict.get('title')
-                ext = info_dict.get('ext')
-                filename = ydl.prepare_filename(info_dict)
-                thumbnail_url = info_dict.get("thumbnail")
-                # duration via mutagen (moviepy was only ever used for this)
-                duration = int(MutagenFile(filename).info.length)
-                with open(filename, "rb") as f:
-
-                    # check for video size
-
-                    await context.bot.deleteMessage(
-                        message_id=bot_message.message_id,
-                        chat_id=update.message.chat_id,
-                    )
-
-                    await context.bot.send_chat_action(
-                        chat_id=update.effective_message.chat_id,
-                        action=ChatAction.UPLOAD_VIDEO,
-                    )
-                    await context.bot.send_video(
-                        chat_id=update.effective_chat.id, 
-                        video=f, 
-                        duration=duration, 
-                        thumbnail=thumbnail_url, 
-                        caption=BOT_ID, 
-                        protect_content=True,
-                        reply_markup=keyboards.pinterest_state_keyboard_rm, 
-                        supports_streaming=True
-                    )
-                    await react_message(update, context.bot, "👍")
-                    # delivered to Telegram: the local file is staging only
-                    cleanup_media(filename)
-            except utils.DownloadError:
-                await react_message(update, context.bot, "👎")
-                await context.bot.editMessageText(
-                    message_id=bot_message.message_id,
-                    chat_id=update.message.chat_id,
-                    text=SOMETHING_WENT_WRONG,
-                )
-    else:
-        await react_message(update, context.bot, "👎")
-        await context.bot.editMessageText(
-            message_id=bot_message.message_id,
-            chat_id=update.message.chat_id,
-            text=INVALID_PINTEREST_URL,
-            parse_mode=ParseMode.HTML
+def _error_card(err: str, token: str):
+    """spec §6.4: an unrecognizable link gets the invalid-Pinterest
+    card with [Retry][Home]. An unavailable media/service is covered
+    by the engine's single-item failure card (the service-side error
+    in §7) — not here."""
+    if err in ("extract", "empty"):
+        return (
+            copy.ERROR_INVALID_PINTEREST,
+            keyboards.retry_home_keyboard(token),
         )
-    
-    return
+    return (copy.ERROR_UNEXPECTED, keyboards.retry_home_keyboard(token))
 
 
-@send_action(ChatAction.TYPING)
-@sync_user
-@log_message
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    assert update.message is not None
-    message = update.message.text
-    assert message is not None
-    print(message)
-    if message == BACK_KEYBOARD:
-        await update.message.reply_text("backed", reply_markup=keyboards.start_keyboard_rm)
-        return INSTAGRAM_STATE
+async def run_pinterest_download(update: Update, context: MyContext, text: str) -> None:
+    """Core Pinterest flow (spec §6.4), shared by the dispatcher and
+    the Pinterest input screen.
 
-    await run_pinterest_download(update, context, message)
-    return PINTEREST_STATE
+    Undecorated core (like the YouTube flow's run_video_download):
+    the callers carry their own chat action and DB work.
+    """
+    await flow.run_media_flow(
+        update, context,
+        url=text,
+        kind="pinterest",
+        opts=_pinterest_opts(),
+        worker=yt_download.video_worker,
+        deliver=yt_download.deliver_video,
+        accepted=copy.PINTEREST_ACCEPTED,
+        resolving=copy.PINTEREST_RESOLVING,
+        slow=copy.TASK_SLOW,
+        on_error=_error_card,
+    )
