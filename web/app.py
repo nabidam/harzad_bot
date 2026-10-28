@@ -118,10 +118,13 @@ async def _auth(request: web.Request) -> dict | None:
 # download jobs
 # ---------------------------------------------------------------------------
 
-def _ytdlp_run(url: str):
+def _ytdlp_run(url: str, job: dict | None = None):
     """Extract + download one video, mirroring the chat handler's pipeline.
 
-    Runs in a worker thread (blocking network + disk).
+    Runs in a worker thread (blocking network + disk). When `job` is
+    passed, the thread flips it to the honest "downloading" state once
+    the metadata is resolved (the state machine the SPA polls:
+    extracting -> downloading -> sending -> done).
     """
     from yt_dlp import YoutubeDL, utils as ytdl_utils
 
@@ -132,6 +135,9 @@ def _ytdlp_run(url: str):
             raise JobError("Could not fetch that link. Check it and try again.")
         if info.get("_type") == "playlist":
             raise JobError("Playlists aren't supported in the app yet — paste a single video link.")
+        if job is not None:
+            job["title"] = info.get("title") or "video"
+            job["state"] = "downloading"
         ydl.download([url])
         filename = ydl.prepare_filename(info)
     if not os.path.exists(filename):
@@ -144,7 +150,7 @@ async def run_job(app: web.Application, job: dict) -> None:
     bot = app["bot"]
     try:
         job["state"] = "extracting"
-        info, filename = await asyncio.to_thread(_ytdlp_run, job["url"])
+        info, filename = await asyncio.to_thread(_ytdlp_run, job["url"], job)
         job["title"] = info.get("title") or "video"
         job["file_name"] = os.path.basename(filename)
         job["file_path"] = filename
@@ -183,7 +189,9 @@ async def run_job(app: web.Application, job: dict) -> None:
         job["state"], job["error"] = "error", str(e)
     except Exception:
         logger.exception("Job %s failed", job["id"])
-        job["state"], job["error"] = "error", "Download failed. Try again."
+        # canonical Mini App failure copy (spec §12.3), aligned with the
+        # bot's service-failure tone
+        job["state"], job["error"] = "error", "This download failed. Check the link or try again."
 
 
 # ---------------------------------------------------------------------------

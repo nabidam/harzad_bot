@@ -102,7 +102,9 @@ def web_app(monkeypatch, fake_llm, tmp_path):
     app["_test_file_path"] = str(tmp_path / "fake_video.mp4")
     app["_test_file_size"] = 1024
 
-    def fake_ytdlp_run(url):  # sync: run_job wraps it in asyncio.to_thread
+    def fake_ytdlp_run(url, job=None):  # sync: run_job wraps it in asyncio.to_thread
+        if job is not None:
+            job["state"] = "downloading"  # mirror the real thread's handoff
         path = app["_test_file_path"]
         with open(path, "wb") as f:
             f.write(b"0" * app["_test_file_size"])

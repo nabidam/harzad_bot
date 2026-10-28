@@ -72,10 +72,12 @@
 <main>
   <section id="tab-download" class="active">
     <div class="card">
-      <label for="url">YouTube link</label>
-      <input type="text" id="url" placeholder="https://youtube.com/watch?v=&hellip;" autocomplete="off" spellcheck="false"/>
+      <label for="url">Media link</label>
+      <input type="text" id="url" placeholder="Paste a media link to download it." autocomplete="off" spellcheck="false"/>
+      <div class="hint">YouTube &middot; Instagram &middot; Pinterest &middot; TikTok &middot; Spotify</div>
       <button class="btn" id="dl-btn">Download</button>
       <div id="status"></div>
+      <button class="btn secondary" id="retry-btn" style="display:none">Try again</button>
       <div class="hint" id="mode-hint" style="display:none">Browser mode &mdash; open the app from the Telegram menu button for chat delivery and the native save popup.</div>
     </div>
     <div class="card" id="result" style="display:none">
@@ -83,7 +85,8 @@
       <div class="meta" id="result-meta"></div>
       <button class="btn" id="save-btn">Save to device</button>
       <a class="btn secondary" id="open-link" target="_blank" rel="noopener">Download via link</a>
-      <div class="hint">A copy is also sent to your chat with the bot.</div>
+      <a class="btn secondary" id="open-chat" href="https://t.me/harzad_bot">Open in chat</a>
+      <div class="hint" id="result-hint">A copy is also sent to your chat with the bot.</div>
     </div>
   </section>
 
@@ -144,7 +147,11 @@ document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click
   $("tab-download").classList.toggle("active", tab === "download");
   $("tab-chat").classList.toggle("active", tab === "chat");
   $("chatbar").style.display = tab === "chat" ? "flex" : "none";
-  if (tab === "chat" && state.messages.length === 0) addMsg("bot", "Hi! Ask me anything \u200D\uFE0F");
+  if (tab === "chat" && state.messages.length === 0) {
+    // Same wording as the bot's AI chat screen (spec §9/§12.2): no
+    // conversation memory, so each message stands on its own.
+    addMsg("bot", "Ask me a question. I answer each message independently for now, so include any context I need in each message.");
+  }
 }));
 
 // ---- api helper ----
@@ -183,12 +190,17 @@ async function boot(){
 boot();
 
 // ---- download tab ----
+// State labels share the bot's status vocabulary (spec §12/§12.2).
 const STATE_LABEL = {
-  starting: "Starting\u2026",
-  extracting: "Fetching video info\u2026",
-  downloading: "Downloading\u2026",
-  sending: "Sending to chat\u2026",
+  starting: "Checking link…",
+  extracting: "Getting media details…",
+  downloading: "Downloading…",
+  sending: "Sending to chat…",
   done: "Ready",
+};
+const COPY = {
+  failed: "This download failed. Check the link or try again.",
+  expired: "This download link may have expired. Generate a new one to continue.",
 };
 
 function busyStatus(text){
@@ -205,6 +217,7 @@ async function startDownload(){
   const url = $("url").value.trim();
   if (!url) return;
   $("dl-btn").disabled = true;
+  $("retry-btn").style.display = "none";
   $("result").style.display = "none";
   try {
     const job = await api("/api/jobs", { url, initData: inTG ? tg.initData : "" });
@@ -215,7 +228,14 @@ async function startDownload(){
     plainStatus(e.message, "error");
     haptic("error");
     $("dl-btn").disabled = false;
+    $("retry-btn").style.display = "block";
   }
+}
+
+// Jobs are pruned after a day; a file link from a pruned job 404s.
+// Check liveness before offering the save, and say so honestly.
+async function jobAlive(id){
+  try { await api("/api/jobs/" + id); return true; } catch (e) { return false; }
 }
 
 async function poll(id){
@@ -227,9 +247,10 @@ async function poll(id){
     showResult(job);
     $("dl-btn").disabled = false;
   } else if (job.state === "error") {
-    plainStatus(job.error || "Download failed.", "error");
+    plainStatus(job.error || COPY.failed, "error");
     haptic("error");
     $("dl-btn").disabled = false;
+    $("retry-btn").style.display = "block";
   } else {
     busyStatus(STATE_LABEL[job.state] || job.state);
     setTimeout(() => poll(id), 2000);
@@ -245,14 +266,26 @@ function showResult(job){
   const link = $("open-link");
   if (job.file_url) { link.href = job.file_url; link.style.display = "block"; }
   else link.style.display = "none";
+  // Distinguish the delivery destination (spec §12.4): file_id is set
+  // only when a copy actually went out to the chat (authenticated job
+  // under the 50 MB bot upload cap).
+  $("result-hint").textContent = job.file_id
+    ? "A copy was also sent to your chat with the bot."
+    : "This file is delivered by the app \u2014 save it from here.";
 }
 
 $("dl-btn").addEventListener("click", startDownload);
+$("retry-btn").addEventListener("click", startDownload);
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") startDownload(); });
 
-$("save-btn").addEventListener("click", () => {
+$("save-btn").addEventListener("click", async () => {
   const job = state.result;
-  if (!job || !job.file_url) return;
+  if (!job) return;
+  if (!await jobAlive(job.id)) {
+    plainStatus(COPY.expired, "error");
+    haptic("error");
+    return;
+  }
   haptic("light");
   if (inTG && typeof tg.downloadFile === "function") {
     tg.downloadFile({ url: job.file_url, file_name: job.file_name || "video.mp4" }, (accepted) => {
@@ -261,6 +294,30 @@ $("save-btn").addEventListener("click", () => {
   } else {
     // browser: Content-Disposition: attachment makes this a plain download
     window.open(job.file_url, "_blank");
+  }
+});
+
+$("open-link").addEventListener("click", async (e) => {
+  const job = state.result;
+  if (!job || !job.file_url) return;
+  e.preventDefault();
+  if (!await jobAlive(job.id)) {
+    plainStatus(COPY.expired, "error");
+    haptic("error");
+    return;
+  }
+  window.open(job.file_url, "_blank");
+});
+
+// Mini App -> bot handoff (spec §12.4): the bot accepts the same links
+// in chat, so the exit back is a plain chat link — no deep-link claim.
+$("open-chat").addEventListener("click", (e) => {
+  e.preventDefault();
+  haptic("light");
+  if (inTG && typeof tg.openTelegramLink === "function") {
+    tg.openTelegramLink("https://t.me/harzad_bot");
+  } else {
+    window.open("https://t.me/harzad_bot", "_blank");
   }
 });
 

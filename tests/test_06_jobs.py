@@ -113,9 +113,9 @@ async def test_double_active_job_409(client, monkeypatch):
     c, _, _ = client
     real = webapp._ytdlp_run
 
-    def slow(url):
+    def slow(url, job=None):
         time.sleep(0.6)
-        return real(url)
+        return real(url, job)
 
     monkeypatch.setattr(webapp, "_ytdlp_run", slow)
     r1 = await create_job(c)
@@ -130,7 +130,7 @@ async def test_double_active_job_409(client, monkeypatch):
 async def test_joberror_surfaces_message(client, monkeypatch):
     c, _, _ = client
 
-    def boom(url):
+    def boom(url, job=None):
         raise webapp.JobError("Custom boom")
 
     monkeypatch.setattr(webapp, "_ytdlp_run", boom)
@@ -144,7 +144,7 @@ async def test_joberror_surfaces_message(client, monkeypatch):
 async def test_unexpected_error_generic_message(client, monkeypatch):
     c, _, _ = client
 
-    def boom(url):
+    def boom(url, job=None):
         raise RuntimeError("traceback noise")
 
     monkeypatch.setattr(webapp, "_ytdlp_run", boom)
@@ -152,7 +152,8 @@ async def test_unexpected_error_generic_message(client, monkeypatch):
     job_id = (await r.json())["id"]
     body = await wait_for_state(c, job_id, {"done", "error"})
     assert body["state"] == "error"
-    assert body["error"] == "Download failed. Try again."
+    # canonical Mini App failure copy (spec §12.3)
+    assert body["error"] == "This download failed. Check the link or try again."
 
 
 # --- status -------------------------------------------------------------------

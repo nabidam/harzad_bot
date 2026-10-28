@@ -30,6 +30,27 @@ async def test_index_serves_spa(client):
     assert text == static.read_text(encoding="utf-8")
 
 
+def test_mini_app_copy_matches_spec_deck():
+    """Spec §12.3: the Mini App copy is the canonical deck text, aligned
+    with the bot's status vocabulary and error tone (spec §12.2). The SPA
+    is a static file, so the strings are pinned against it here."""
+    static = Path(__file__).resolve().parent.parent / "web" / "static" / "index.html"
+    html = static.read_text(encoding="utf-8")
+    for s in (
+        "Paste a media link to download it.",           # placeholder
+        "YouTube &middot; Instagram &middot; Pinterest &middot; TikTok &middot; Spotify",
+        ">Download<",                                    # submit
+        "Checking link\u2026",                           # loading
+        "Getting media details\u2026",                   # bot vocabulary
+        "This download failed. Check the link or try again.",
+        ">Try again</button>",                           # retry
+        "This download link may have expired. Generate a new one to continue.",
+        "Ask me a question. I answer each message independently for now,",
+        "https://t.me/harzad_bot",                       # handoff back to the bot
+    ):
+        assert s in html, f"missing Mini App copy: {s!r}"
+
+
 async def test_health(client):
     c, _, _ = client
     r = await c.get("/api/health")

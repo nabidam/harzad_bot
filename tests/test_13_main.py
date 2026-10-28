@@ -9,11 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import configurations.settings as settings
 import main
+from utils import copy
 
 
 class RecordingBot:
     def __init__(self):
         self.calls = []
+        self.args = {}
         self.set_my_commands = self._rec("set_my_commands")
         self.set_my_description = self._rec("set_my_description")
         self.set_my_short_description = self._rec("set_my_short_description")
@@ -23,6 +25,7 @@ class RecordingBot:
     def _rec(self, name):
         async def rec(*a, **k):
             self.calls.append(name)
+            self.args.setdefault(name, []).append((a, k))
             return MagicMock()
 
         rec.name = name
@@ -60,6 +63,29 @@ async def test_post_init_order(monkeypatch):
     ]
     profile.assert_awaited_once_with(bot)
     mini.assert_awaited_once()
+
+
+async def test_post_init_profile_copy_matches_spec(monkeypatch):
+    """Spec §13.3: the command menu and the profile description are the
+    canonical deck copy."""
+    bot = RecordingBot()
+    monkeypatch.setattr(main, "set_profile_photo", AsyncMock())
+    monkeypatch.setattr(main, "start_mini_app", AsyncMock())
+
+    await main.post_init(make_application(bot))
+
+    commands = bot.args["set_my_commands"][0][0][0]
+    assert [(c.command, c.description) for c in commands] == [
+        ("start", "Open Home"),
+        ("help", "How to use Harzad"),
+        ("tasks", "View active tasks"),
+        ("cancel", "Cancel a running task"),
+    ]
+    description = bot.args["set_my_description"][0][0][0]
+    assert description == copy.BOT_DESCRIPTION
+    assert "YouTube, Instagram, Pinterest, TikTok, and Spotify" in description
+    short = bot.args["set_my_short_description"][0][0][0]
+    assert short == copy.BOT_SHORT_DESCRIPTION
 
 
 # --- start_mini_app ------------------------------------------------------------------
