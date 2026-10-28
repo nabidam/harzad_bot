@@ -241,16 +241,22 @@ async def test_status_stages_follow_the_phase(monkeypatch, tmp_path):
 async def test_phase_text_is_phase_and_threshold_aware():
     """The stage callable reads the live phase: downloading before 60 s
     is the downloading line, at 60 s the long-task line; titles are
-    HTML-escaped."""
+    HTML-escaped. The resolving/slow lines are the platform's own
+    (parameterized — Pinterest reuses the engine with its own copy,
+    spec §6.4)."""
     state = {"title": "A & B <c>", "downloading": False, "input": "u"}
-    assert flow._phase_text(1, state) == copy.YOUTUBE_RESOLVING.format(elapsed=1)
-    assert flow._phase_text(35, state) == copy.YOUTUBE_SLOW.format(elapsed=35)
+    yt = (copy.YOUTUBE_RESOLVING, copy.YOUTUBE_SLOW)
+    assert flow._phase_text(1, state, *yt) == copy.YOUTUBE_RESOLVING.format(elapsed=1)
+    assert flow._phase_text(35, state, *yt) == copy.YOUTUBE_SLOW.format(elapsed=35)
+    pin = (copy.PINTEREST_RESOLVING, copy.TASK_SLOW)
+    assert flow._phase_text(1, state, *pin) == copy.PINTEREST_RESOLVING.format(elapsed=1)
+    assert flow._phase_text(35, state, *pin) == copy.TASK_SLOW.format(elapsed=35)
     state["downloading"] = True
-    mid = flow._phase_text(35, state)
+    mid = flow._phase_text(35, state, *pin)
     assert mid == copy.TASK_DOWNLOADING.format(
         short_title="A &amp; B &lt;c&gt;", elapsed=35
     )
-    late = flow._phase_text(60, state)
+    late = flow._phase_text(60, state, *pin)
     assert late == copy.TASK_STILL_WORKING.format(
         short_title="A &amp; B &lt;c&gt;", elapsed=60
     )

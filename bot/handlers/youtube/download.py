@@ -32,7 +32,7 @@ from bot.handlers.youtube import flow
 logger = getLogger(__name__)
 
 
-def _video_worker(url: str, opts: dict, cancel_flag, push) -> dict:
+def video_worker(url: str, opts: dict, cancel_flag, push) -> dict:
     """Blocking worker (runs on a worker thread, spec §4.1/§6.3).
 
     Resolves the link, then downloads every entry one by one. Emits
@@ -104,7 +104,7 @@ def _video_worker(url: str, opts: dict, cancel_flag, push) -> dict:
     return outcome
 
 
-async def _deliver_video(context, update, chat_id: int, item: dict) -> str:
+async def deliver_video(context, update, chat_id: int, item: dict) -> str:
     """Loop-side delivery of one downloaded item (spec §6.3/§6.6).
 
     <=50 MB: the video itself (title, cover, duration, streaming), then
@@ -166,7 +166,18 @@ async def run_video_download(
         url=url,
         kind=kind,
         opts=video_opts(max_height),
-        worker=_video_worker,
-        deliver=_deliver_video,
+        worker=video_worker,
+        deliver=deliver_video,
         max_height=max_height,
+        on_error=_error_card,
+    )
+
+
+def _error_card(err: str, token: str):
+    """Both engine error kinds ("extract"/"empty") mean the link is not
+    a video or playlist yt-dlp can resolve: the invalid-YouTube-link
+    card with [Retry][Home] (spec §6.3)."""
+    return (
+        copy.ERROR_INVALID_YOUTUBE,
+        keyboards.retry_home_keyboard(token),
     )
