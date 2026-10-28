@@ -374,6 +374,9 @@ TOAST_LYRICS_UNAVAILABLE: str = "Lyrics aren't available yet."
 
 INLINE_MIN_QUERY_TITLE: str = "Search for a song"
 INLINE_MIN_QUERY_DESC: str = "Type an artist or song title after @harzad_bot."
+INLINE_NO_RESULTS_TITLE: str = "No matches"
+INLINE_NO_RESULTS_DESC: str = "Try the artist and title together."
+INLINE_FAILED_TITLE: str = "Search failed"
 
 # ---------------------------------------------------------------------------
 # Mini App copy (spec §12.3)

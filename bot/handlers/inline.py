@@ -63,8 +63,8 @@ def _no_results_article(query: str) -> InlineQueryResultArticle:
     """A useful explanation when the query matched nothing."""
     return InlineQueryResultArticle(
         id="harzad-no-results",
-        title="No matches",
-        description="Try the artist and title together.",
+        title=copy.INLINE_NO_RESULTS_TITLE,
+        description=copy.INLINE_NO_RESULTS_DESC,
         input_message_content=InputTextMessageContent(
             message_text=copy.SEARCH_NO_RESULTS.format(query=escape_html(query)),
             parse_mode=ParseMode.HTML,
@@ -76,7 +76,7 @@ def _failed_article() -> InlineQueryResultArticle:
     """The honest backend-failure card (spec §5.6)."""
     return InlineQueryResultArticle(
         id="harzad-search-failed",
-        title="Search failed",
+        title=copy.INLINE_FAILED_TITLE,
         description=copy.SEARCH_FAILED[:256],
         input_message_content=InputTextMessageContent(
             message_text=copy.SEARCH_FAILED,
