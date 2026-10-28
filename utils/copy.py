@@ -215,6 +215,7 @@ TASK_CANCEL_REQUESTED: str = (
 TASK_CANCELLED: str = (
     "⏹️ Cancelled. {completed_count} file(s) already sent remain in the chat."
 )
+TASK_AI_CANCELLED: str = "⏹️ Stopped. No answer was sent."
 TASK_PLAYLIST_DONE: str = (
     "✅ Playlist finished: {success_count}/{total_count} tracks sent.{failure_line}"
 )

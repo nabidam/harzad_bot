@@ -110,39 +110,9 @@ class TestSpotify:
 
 
 # --- AI chat ---------------------------------------------------------------------------
-
-@pytest.mark.usefixtures("test_tg")
-class TestAiChat:
-    def setup_method(self, method):
-        from bot.handlers.ai import chat as m
-
-        self.m = m
-
-    async def test_reply_sent_as_html(self, test_tg, monkeypatch):
-        calls = []
-
-        class FakeLLM:
-            async def ainvoke(self, messages):
-                calls.append(list(messages))
-
-                class _Resp:
-                    content = "Hello <b>there</b>"
-
-                return _Resp()
-
-        monkeypatch.setattr(self.m, "llm", FakeLLM())
-        update = make_update("ping", test_tg)
-        context = make_context()
-        result = await self.m.handler(update, context)
-        assert result == self.m.AI_CHAT_STATE
-        assert calls[0][0] == ("system", self.m.SYSTEM_PROMPT)
-        assert calls[0][1] == ("user", "ping")
-        sm = context.bot.send_message
-        sm.assert_awaited_once()
-        kwargs = sm.await_args.kwargs
-        assert kwargs["parse_mode"] == "HTML"
-        assert "<b>" not in kwargs["text"]  # user/LLM text escaped
-        assert "Hello &lt;b&gt;there&lt;/b&gt;" in kwargs["text"]
+# The AI chat flow pins moved to tests/test_25_ai_chat_flow.py (step 9:
+# the request is now a task with the shared status engine, Stop, the
+# 30 s guard, and retry replay).
 
 
 # --- AI TTI (dormant) --------------------------------------------------------------------

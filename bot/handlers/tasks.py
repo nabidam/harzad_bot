@@ -39,15 +39,19 @@ logger = getLogger(__name__)
 # --- Retry (spec §7.3) ------------------------------------------------------
 
 def _retry_players():
-    """kind -> (urls, extra) replay function. Kept as a factory (not a
-    module-level dict) so the flow modules are imported lazily: this
-    module is imported very early in the app build, and the flows pull
-    in the downloaders' dependencies."""
+    """kind -> replay function over the task's stored retry_payload.
+    Kept as a factory (not a module-level dict) so the flow modules
+    are imported lazily: this module is imported very early in the
+    app build, and the flows pull in the downloaders' dependencies."""
+    from bot.handlers.ai import chat as ai_chat
     from bot.handlers.instagram import download as ig_download
     from bot.handlers.music.spotify import download as spotify_download
     from bot.handlers.pinterest import download as pinterest_download
     from bot.handlers.youtube import download as yt_download
     from bot.handlers.youtube import mp3 as yt_mp3
+
+    async def play_ai(update, context, payload):
+        await ai_chat.run_ai_chat(update, context, payload["question"])
 
     async def play_spotify(update, context, payload):
         for url in payload["urls"]:
@@ -86,6 +90,7 @@ def _retry_players():
             await yt_mp3.run_mp3_download(update, context, url)
 
     return {
+        "ai": play_ai,
         "spotify": play_spotify,
         "instagram": play_instagram,
         "pinterest": play_pinterest,
@@ -282,7 +287,7 @@ async def on_task_retry(update: Update, context: MyContext):
 
     payload = task.retry_payload
     player = _retry_players().get(task.kind)
-    if player is None or not payload or not payload.get("urls"):
+    if player is None or not payload:
         await cq.answer()
         await cq.message.reply_text(
             copy.ERROR_RESTART,

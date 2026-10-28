@@ -65,6 +65,23 @@ youtube_input_keyboard = InlineKeyboardMarkup([_home_tasks_row()])
 pinterest_input_keyboard = InlineKeyboardMarkup([_home_tasks_row()])
 ai_chat_keyboard = InlineKeyboardMarkup([[_button(copy.BTN_HOME, "nav:home")]])
 
+
+def ai_stop_keyboard(token: str) -> InlineKeyboardMarkup:
+    """In-flight AI status row (spec §9): [⏹ Stop] [🏠 Home]. Stop is a
+    real task cancel (task:cancel:<token>)."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_AI_STOP, f"task:cancel:{token}"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def ai_answer_keyboard() -> InlineKeyboardMarkup:
+    """The AI answer row (spec §9): [Ask another question] [🏠 Home]."""
+    return InlineKeyboardMarkup([
+        [_button(copy.BTN_AI_ASK_AGAIN, "nav:ai:chat"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
 # --- Help (spec §13.1) -------------------------------------------------------
 
 help_keyboard = InlineKeyboardMarkup([
