@@ -637,6 +637,31 @@ async def test_song_dl_inline_token_without_index(monkeypatch):
     assert mock.await_args.args[2] == track.spotify_url
 
 
+async def test_song_dl_shared_card_runs_for_the_tapping_member(monkeypatch):
+    """Group safety (spec §11.2): the shared card's token lives in the
+    process-wide store, so a DIFFERENT member in a DIFFERENT chat can tap
+    Download and the action runs for the tapper — never for the searcher,
+    and never against the searcher's private state."""
+    mock = AsyncMock()
+    monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)
+    track = fake_track(7)
+    context = make_context()
+    token = store_tracks(context, [track])
+
+    tapper = make_callback(
+        f"song:dl:{token}",
+        message=MagicMock(chat_id=99, message_id=601, photo=None),
+    )
+    tapper.effective_user = MagicMock(id=4_242_424_242, first_name="M")
+    await search.on_song_action(tapper, context)
+
+    mock.assert_awaited_once()
+    # the download core receives the TAPPER's update (runs for the clicker)
+    assert mock.await_args.args[0] is tapper
+    assert mock.await_args.args[2] == track.spotify_url
+    assert tapper.callback_query.answer.await_args.args == ()  # plain ack
+
+
 async def test_song_action_stale_token_toasts_and_runs_nothing(monkeypatch):
     mock = AsyncMock()
     monkeypatch.setattr(search.spotify_download, "run_spotify_download", mock)

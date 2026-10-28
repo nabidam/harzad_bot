@@ -154,6 +154,11 @@ async def render_tasks(update: Update, context: MyContext, *, page: int = 0) -> 
              InlineKeyboardButton(copy.BTN_HOME, callback_data="nav:home")]
         ]
     else:
+        # A stale page (tasks finished since the button was rendered)
+        # falls back to the current list, never an empty message
+        # (spec §16: task:page stale behavior).
+        pages = (len(active) + ACTIVE_PAGE_SIZE - 1) // ACTIVE_PAGE_SIZE
+        page = max(0, min(page, pages - 1))
         start = page * ACTIVE_PAGE_SIZE
         page_tasks = active[start:start + ACTIVE_PAGE_SIZE]
         text, rows = _active_rows(page_tasks)
