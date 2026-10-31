@@ -11,13 +11,13 @@ yt-dlp step run in worker threads that cannot be killed, so a cancel
 stops items that have not started yet; an in-flight track that finishes
 after the cancel is discarded, not sent, and the final count says so.
 
-The 90 s resolve guard (spec §4.4, raised from the proposed 45 s by
-2026-10-31 telemetry) carries a post-timeout grace (see utils.executor):
-a process stop (SIGSTOP / cgroup freeze) expires the local timer while
-the worker has already finished, and on resume the finished result is
-honoured instead of discarded (incident 2026-10-28 21:39 — a 44 s
-healthy resolve + a 44 s process stop made the guard fire on work that
-was already done).
+The 600 s (10 min) resolve guard (spec §4.4; owner decision 2026-10-31
+raised it from the proposed 45 s on telemetry) carries a post-timeout
+grace (see utils.executor): a process stop (SIGSTOP / cgroup freeze)
+expires the local timer while the worker has already finished, and on
+resume the finished result is honoured instead of discarded (incident
+2026-10-28 21:39 — a 44 s healthy resolve + a 44 s process stop made
+the guard fire on work that was already done).
 
 The status message is one per task (spec §4.2): the accepted line at
 t=0 with [⏹ Cancel download] [📥 Tasks], the per-track download line at
@@ -45,13 +45,16 @@ from spotdl import Spotdl
 # Init logger
 logger = getLogger(__name__)
 
-# Spec §4.4 guard for the Spotify URL resolve step. Raised 45 -> 90 s
-# after production telemetry (2026-10-28..31): five healthy single-track
-# resolves measured 42.7-48.9 s and one 123.5 s outlier (intermittent
-# egress stalls to the Spotify API) — the 45 s guard was firing on
-# healthy work. Aligned with the text-search guard (same Spotify
-# backend, 90 s). Telemetry should keep validating it.
-RESOLVE_TIMEOUT_SECONDS = 90
+# Spec §4.4 guard for the Spotify URL resolve step. Owner decision
+# 2026-10-31: 45 -> 600 s. Telemetry (2026-10-28..31) showed healthy
+# resolves at 42.7-48.9 s plus a 123.5 s outlier: the Spotify API
+# calls ride the box proxy, whose egress stalls for tens of seconds
+# at a time, and spotipy sets no per-request timeout. 600 s lets a
+# stalled egress ride out instead of bouncing the user to Retry; the
+# status shows real elapsed time and the task stays cancellable, so
+# the worst case (a dead egress) is a 10-minute honest verdict, not a
+# fake progress bar.
+RESOLVE_TIMEOUT_SECONDS = 600
 
 
 def search_term(spotdl: Spotdl, term: str):
