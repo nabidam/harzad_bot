@@ -11,12 +11,13 @@ yt-dlp step run in worker threads that cannot be killed, so a cancel
 stops items that have not started yet; an in-flight track that finishes
 after the cancel is discarded, not sent, and the final count says so.
 
-The 45 s resolve guard (spec §4.4) carries a post-timeout grace (see
-utils.executor): a process stop (SIGSTOP / cgroup freeze) expires the
-local timer while the worker has already finished, and on resume the
-finished result is honoured instead of discarded (incident
-2026-10-28 21:39 — a 44 s healthy resolve + a 44 s process stop made
-the guard fire on work that was already done).
+The 90 s resolve guard (spec §4.4, raised from the proposed 45 s by
+2026-10-31 telemetry) carries a post-timeout grace (see utils.executor):
+a process stop (SIGSTOP / cgroup freeze) expires the local timer while
+the worker has already finished, and on resume the finished result is
+honoured instead of discarded (incident 2026-10-28 21:39 — a 44 s
+healthy resolve + a 44 s process stop made the guard fire on work that
+was already done).
 
 The status message is one per task (spec §4.2): the accepted line at
 t=0 with [⏹ Cancel download] [📥 Tasks], the per-track download line at
@@ -44,10 +45,13 @@ from spotdl import Spotdl
 # Init logger
 logger = getLogger(__name__)
 
-# Spec §4.4 proposed guard for the Spotify URL resolve step (owner
-# decision: the recommended default applies; production telemetry
-# should validate it before it is treated as a measured fact).
-RESOLVE_TIMEOUT_SECONDS = 45
+# Spec §4.4 guard for the Spotify URL resolve step. Raised 45 -> 90 s
+# after production telemetry (2026-10-28..31): five healthy single-track
+# resolves measured 42.7-48.9 s and one 123.5 s outlier (intermittent
+# egress stalls to the Spotify API) — the 45 s guard was firing on
+# healthy work. Aligned with the text-search guard (same Spotify
+# backend, 90 s). Telemetry should keep validating it.
+RESOLVE_TIMEOUT_SECONDS = 90
 
 
 def search_term(spotdl: Spotdl, term: str):

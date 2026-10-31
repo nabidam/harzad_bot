@@ -218,7 +218,7 @@ These are **recommended starting thresholds**, not measured production facts. Va
 | Operation | Proposed UX timeout guard | Timeout message/action |
 |---|---:|---|
 | Spotify text search | 90s | Search timeout copy + Search again + Home |
-| Spotify URL resolve | 45s | Temporary service error + Retry |
+| Spotify URL resolve | 90s (raised from the proposed 45s on 2026-10-31: telemetry showed healthy resolves at 42.7–48.9s plus one 123.5s egress-stall outlier) | Temporary service error + Retry |
 | Instagram metadata/fetch | 45s | Temporary Instagram service error + Retry |
 | YouTube metadata/extract | 45s | Temporary YouTube service error + Retry |
 | Video/audio download | 10 min per item, then validate by telemetry | Download timed out + Retry; for playlists, show completed items and failed item count |
