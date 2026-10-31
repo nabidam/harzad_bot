@@ -79,7 +79,7 @@ async def test_authenticated_job_delivers_to_chat(client):
     kwargs = bot.send_video.await_args.kwargs
     assert kwargs["chat_id"] == 555000111
     assert kwargs["supports_streaming"] is True
-    assert kwargs["protect_content"] is True
+    assert kwargs["protect_content"] is False
     assert kwargs["duration"] == 42
     assert "Test Video" in kwargs["caption"]
     assert body["file_id"] == "fid_test_123"

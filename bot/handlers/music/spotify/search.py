@@ -101,7 +101,7 @@ async def _send_card(
                 caption=caption,
                 parse_mode=ParseMode.HTML,
                 reply_markup=markup,
-                protect_content=True,
+                protect_content=False,
             )
             return
         except TelegramError:
@@ -485,5 +485,5 @@ async def _send_preview(
         audio=url,
         title=track.title,
         performer=track.artist,
-        protect_content=True,
+        protect_content=False,
     )

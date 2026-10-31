@@ -142,7 +142,7 @@ async def deliver_video(context, update, chat_id: int, item: dict) -> str:
                 caption=escape_html(item["title"]), bot_id=BOT_ID
             ),
             parse_mode="HTML",
-            protect_content=True,
+            protect_content=False,
             supports_streaming=True,
         )
     # delivered to Telegram: the local file is staging only

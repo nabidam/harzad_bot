@@ -250,7 +250,7 @@ async def test_run_search_sends_one_card_with_token_buttons(monkeypatch):
     kw = context.bot.send_photo.await_args.kwargs
     assert kw["photo"] == tracks[0].cover_url
     assert "Match 1 of 2" in kw["caption"]
-    assert kw["protect_content"] is True
+    assert kw["protect_content"] is False
     flat = [b.callback_data for b in _buttons(kw["reply_markup"]) if b.callback_data]
     token = flat[0].split(":")[2]
     assert f"song:dl:{token}:1" in flat

@@ -203,10 +203,10 @@ def _ig_worker(url: str, opts: dict, cancel_flag, push) -> dict:
 
 async def _deliver_ig(context, update, chat_id: int, item: dict) -> str:
     """Loop-side delivery of one Instagram media item from its remote
-    URL (spec §6.2). protect_content stays on until the owner decides
-    the forwarding policy (spec §15 open item)."""
+    URL (spec §6.2). protect_content is off per the owner decision
+    2026-10-31 (spec §11.3): delivered media must stay shareable."""
     caption = item.get("caption")
-    kwargs = {"chat_id": chat_id, "protect_content": True}
+    kwargs = {"chat_id": chat_id, "protect_content": False}
     if caption:
         kwargs.update(caption=caption, parse_mode=ParseMode.HTML)
     if item["kind"] == "video":

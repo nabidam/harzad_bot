@@ -186,7 +186,7 @@ async def test_ig_photo_post_full_flow(tmp_path, monkeypatch):
     pkw = context.bot.send_photo.await_args.kwargs
     assert pkw["photo"] == "http://ig/photo.jpg"
     assert pkw["caption"] == "hi"
-    assert pkw["protect_content"] is True
+    assert pkw["protect_content"] is False
     context.status_message.delete.assert_awaited()
     context.bot.set_message_reaction.assert_awaited_once()
     assert get_registry(context).get(_status_token(context)).status == DONE

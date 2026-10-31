@@ -201,5 +201,5 @@ async def test_send_image_protects_content():
     bot.send_photo = AsyncMock()
     await helpers.send_image(bot, 99, "photo-obj", caption="c")
     kwargs = bot.send_photo.await_args.kwargs
-    assert kwargs["protect_content"] is True
+    assert kwargs["protect_content"] is False
     assert kwargs["parse_mode"] == ParseMode.HTML

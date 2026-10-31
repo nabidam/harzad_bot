@@ -87,7 +87,7 @@ async def send_image(bot: ExtBot, receiver, image, caption = None, keyboard = No
         caption=caption,
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
-        protect_content=True,
+        protect_content=False,
     )
 
 def next_proxy():

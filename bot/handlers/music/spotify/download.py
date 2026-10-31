@@ -110,8 +110,8 @@ def _song_url(song):
 async def _deliver_spotify(context, chat_id: int, song, path: str) -> None:
     """Send one finished MP3 (spec §6.1), then drop the staging file.
 
-    protect_content stays True on Spotify audio until the owner decides
-    the forwarding policy (spec §15 open item).
+    protect_content is off (owner decision 2026-10-31, spec §11.3):
+    delivered media must stay downloadable and forwardable.
     """
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
     with open(path, "rb") as f:
@@ -122,7 +122,7 @@ async def _deliver_spotify(context, chat_id: int, song, path: str) -> None:
             title=_song_title(song),
             performer=getattr(song, "artist", None),
             duration=int((getattr(song, "duration", None) or 0) / 1000),
-            protect_content=True,
+            protect_content=False,
         )
     # delivered to Telegram: the local file is staging only
     cleanup_media(path)

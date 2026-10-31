@@ -192,7 +192,7 @@ async def test_single_track_full_flow(tmp_path):
     assert kwargs["performer"] == "Artist"
     assert kwargs["duration"] == 2
     assert kwargs["thumbnail"] == "http://cover/x.jpg"
-    assert kwargs["protect_content"] is True
+    assert kwargs["protect_content"] is False
 
     # delivered: staging file gone, status removed, 👍 on the trigger
     assert not (tmp_path / "T1.mp3").exists()

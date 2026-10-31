@@ -175,7 +175,7 @@ async def run_job(app: web.Application, job: dict) -> None:
                     cover=cover_file,
                     caption=MEDIA_CAPTION.format(caption=escape_html(job["title"]), bot_id=BOT_ID),
                     parse_mode=ParseMode.HTML,
-                    protect_content=True,
+                    protect_content=False,
                     supports_streaming=True,
                 )
             job["file_id"] = msg.video.file_id if msg.video else None

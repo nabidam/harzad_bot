@@ -604,7 +604,7 @@ Remove the lyrics track-card button until a real provider is live. Do not render
 
 ### 11.3 File protection policy
 
-The current implementation uses `protect_content` on Spotify audio, which prevents forwarding. This is a product-policy choice, not just styling. **Recommended default:** allow forwarding for content delivered by the bot because sharing is a stated music-bot job. However, do not silently change production protection behavior without owner approval; confirm the decision in §15 before release. Whatever policy is chosen must be consistent between private downloads and inline/group results.
+**Owner decision (2026-10-31): protection off.** `protect_content` is `False` on every bot-delivered message (Spotify audio and previews, YouTube mp3/video, Instagram, images, Mini App delivery). The phase1 default of `protect_content=True` blocked the owner from saving and forwarding downloaded music in the private chat (Telegram: "Copying and forwarding from this chat is not allowed"), which defeated the bot's core job; the recommended default (allow forwarding for bot-delivered content, sharing being a stated music-bot job) therefore applied as-is. **Rule if protection is ever re-enabled:** it must be consistent between private downloads and inline/group results, and needs a fresh owner decision here first.
 
 ---
 
@@ -757,7 +757,7 @@ These decisions are product policy and should be answered before the related beh
 
 | Question | Recommended default | Priority |
 |---|---|---|
-| May downloaded audio/video be forwarded? Current Spotify audio uses `protect_content=True`. | Allow forwarding because sharing is a core use case, unless there is an explicit product/legal reason to prevent it. Keep current behavior until owner approval. | P0 decision |
+| May downloaded audio/video be forwarded? | Decided 2026-10-31 (owner): yes — `protect_content=False` on all delivered media. The protection was blocking the owner from saving downloaded music. | Done |
 | Should the product remain English-only? Audience skews Persian. | Ship P0 with localization-ready strings; prioritize Persian as P1 with manual override. | P1 |
 | Should text-to-image be visible while the engine is missing? | No. Remove the button until a real end-to-end flow is available. | P0 |
 | Are lyrics available now? | No. Remove the button until a working provider exists. | P0 |

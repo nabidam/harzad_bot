@@ -189,7 +189,7 @@ async def test_single_video_full_flow(monkeypatch, tmp_path):
     kwargs = sv.await_args.kwargs
     assert kwargs["duration"] == 2  # int(2.02) from the fixture
     assert kwargs["supports_streaming"] is True
-    assert kwargs["protect_content"] is True
+    assert kwargs["protect_content"] is False
     assert kwargs["thumbnail"] == "http://t/x.webp"  # no local thumb -> URL
     assert "T1" in kwargs["caption"]
 
@@ -615,7 +615,7 @@ async def test_mp3_single_flow(monkeypatch, tmp_path):
     kwargs = sa.await_args.kwargs
     assert kwargs["title"] == "M1"
     assert kwargs["duration"] >= 1
-    assert kwargs["protect_content"] is True
+    assert kwargs["protect_content"] is False
     assert "M1" in kwargs["caption"]
     context.status_message.delete.assert_awaited_once()
 
