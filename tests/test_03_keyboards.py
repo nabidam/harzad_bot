@@ -249,3 +249,20 @@ def test_track_keyboard_in_chat_and_inline():
     markup = kb.track_keyboard("ab12cd34", index=0, spotify_url="")
     urls = [b for row in markup.inline_keyboard for b in row if b.url]
     assert urls == []
+
+
+def test_too_large_and_large_file_keyboards():
+    """Verify large file keyboards construct valid InlineKeyboardButton with copy_text."""
+    from telegram import InlineKeyboardButton
+
+    for markup in (kb.too_large_keyboard("https://example.com/file.mp4"),
+                   kb.large_file_keyboard("https://example.com/file.mp4")):
+        rows = markup.inline_keyboard
+        assert len(rows) == 1
+        btn = rows[0][0]
+        assert isinstance(btn, InlineKeyboardButton)
+        assert btn.text == copy.BTN_COPY_LINK
+        d = btn.to_dict()
+        assert d["copy_text"]["text"] == "https://example.com/file.mp4"
+        assert rows[0][1].callback_data == "nav:home"
+        assert rows[0][2].callback_data == "nav:tasks"

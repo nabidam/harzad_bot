@@ -8,7 +8,6 @@ URL), so no file staging is involved.
 """
 import asyncio
 import re
-from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 from typing import Optional
 
@@ -88,8 +87,4 @@ def resolve_preview_url_sync(title: str, artist: str) -> Optional[str]:
 
 async def resolve_preview_url(title: str, artist: str) -> Optional[str]:
     """resolve_preview_url_sync offloaded to an executor (blocking I/O)."""
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor() as pool:
-        return await loop.run_in_executor(
-            pool, resolve_preview_url_sync, title, artist
-        )
+    return await asyncio.to_thread(resolve_preview_url_sync, title, artist)

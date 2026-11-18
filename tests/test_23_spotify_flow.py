@@ -29,10 +29,10 @@ TRACK_URL = "https://open.spotify.com/track/abc"
 PLAYLIST_URL = "https://open.spotify.com/playlist/xyz"
 
 
-def make_song(name, url=None, artist="Artist", duration_ms=2000,
+def make_song(name, url=None, artist="Artist", duration=200,
               cover="http://cover/x.jpg"):
     return SimpleNamespace(
-        name=name, artist=artist, duration=duration_ms,
+        name=name, artist=artist, duration=duration,
         cover_url=cover, url=url or f"https://open.spotify.com/track/{name}",
         json={"name": name, "artist": artist},
     )
@@ -190,7 +190,7 @@ async def test_single_track_full_flow(tmp_path):
     kwargs = sa.await_args.kwargs
     assert kwargs["title"] == "T1"
     assert kwargs["performer"] == "Artist"
-    assert kwargs["duration"] == 2
+    assert kwargs["duration"] == 200
     assert kwargs["thumbnail"] == "http://cover/x.jpg"
     assert kwargs["protect_content"] is False
 

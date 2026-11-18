@@ -22,7 +22,16 @@ class TokenStore:
     def __init__(self) -> None:
         self._data: dict[str, tuple[Any, float]] = {}
 
+    def prune(self) -> int:
+        now = time.monotonic()
+        expired = [token for token, (_, expires_at) in self._data.items() if now > expires_at]
+        for token in expired:
+            self._data.pop(token, None)
+        return len(expired)
+
     def put(self, value: Any, ttl_seconds: float) -> str:
+        if len(self._data) >= 50:
+            self.prune()
         token = uuid.uuid4().hex[:8]
         self._data[token] = (value, time.monotonic() + ttl_seconds)
         return token

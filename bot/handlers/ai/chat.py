@@ -132,7 +132,11 @@ async def run_ai_chat(update: Update, context: MyContext, question: str) -> None
     try:
         async with progress.status_ticker(
             context.bot, chat_id, status.message_id,
-            stages=stages, parse_mode=ParseMode.HTML,
+            stages=stages,
+            reply_markup=lambda: keyboards.ai_stop_keyboard(
+                task.token
+            ) if not task.cancel_event.is_set() else keyboards.home_tasks_row_keyboard(),
+            parse_mode=ParseMode.HTML,
         ):
             done, _ = await asyncio.wait(
                 {call, timeout_task, cancel_watch},
@@ -211,9 +215,12 @@ async def run_ai_chat(update: Update, context: MyContext, question: str) -> None
     except TelegramError:
         logger.warning("could not delete the AI status message",
                        exc_info=True)
+    safe_text = escape_html(content)
+    if len(safe_text) > 4000:
+        safe_text = safe_text[:3950] + "…\n<i>(truncated)</i>"
     await context.bot.send_message(
         chat_id=chat_id,
-        text=escape_html(content),
+        text=safe_text,
         parse_mode=ParseMode.HTML,
         reply_markup=keyboards.ai_answer_keyboard(),
     )

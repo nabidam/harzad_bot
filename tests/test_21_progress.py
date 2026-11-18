@@ -65,6 +65,7 @@ async def test_stages_apply_exactly_once_at_their_second():
 
     async with progress.live_status(
         bot, 7, "Accepted…",
+        reply_markup="KB",
         parse_mode="HTML",
         tick_seconds=0.1,
         stages=[
@@ -87,6 +88,32 @@ async def test_stages_apply_exactly_once_at_their_second():
     assert len(edits) == 2
     assert bot.edit_message_text.await_args.kwargs["message_id"] == 500
     assert bot.edit_message_text.await_args.kwargs["parse_mode"] == "HTML"
+    assert bot.edit_message_text.await_args.kwargs["reply_markup"] == "KB"
+    for call in bot.edit_message_text.await_args_list:
+        assert call.kwargs["reply_markup"] == "KB"
+
+
+async def test_status_ticker_passes_callable_reply_markup():
+    bot = make_bot()
+    called_count = 0
+
+    def markup_fn():
+        nonlocal called_count
+        called_count += 1
+        return f"KB_{called_count}"
+
+    async with progress.status_ticker(
+        bot, 7, 500,
+        reply_markup=markup_fn,
+        stages=[(1, "First"), (2, "Second")],
+        tick_seconds=0.1,
+    ):
+        await asyncio.sleep(2.4)
+
+    calls = bot.edit_message_text.await_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs["reply_markup"] == "KB_1"
+    assert calls[1].kwargs["reply_markup"] == "KB_2"
 
 
 async def test_stages_are_sorted_even_when_given_out_of_order():

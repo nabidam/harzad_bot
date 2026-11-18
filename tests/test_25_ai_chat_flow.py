@@ -288,3 +288,20 @@ async def test_ai_retry_replays_question(monkeypatch):
                 if t.status == DONE and t.kind == "ai"]
     assert len(replayed) == 1
     assert replayed[0].input == "ping"
+
+
+async def test_ai_long_response_is_truncated(monkeypatch):
+    """An answer exceeding Telegram's 4096-char limit is safely truncated."""
+    long_content = "A" * 5000
+    monkeypatch.setattr(ai_chat, "llm", FakeLLM(content=long_content))
+    update = make_update("essay")
+    context = make_context()
+
+    await ai_chat.run_ai_chat(update, context, "essay")
+
+    last = context.bot.send_message.await_args_list[-1].kwargs
+    assert len(last["text"]) <= 4000
+    assert "<i>(truncated)</i>" in last["text"]
+    assert last["parse_mode"] == "HTML"
+    token = _status_token(context)
+    assert get_registry(context).get(token).status == DONE

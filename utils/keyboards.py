@@ -142,13 +142,10 @@ def retry_tasks_home_keyboard(token: str) -> InlineKeyboardMarkup:
 
 def too_large_keyboard(link: str) -> InlineKeyboardMarkup:
     """[📋 Copy download link] [🏠 Home] [📥 Tasks] on the >50 MB card
-    (spec §6.3/§6.6). The copy button is a CopyTextButton — it copies
-    the direct link, no callback needed (the link text rides in the
-    copy_text payload, which is why the 64-byte callback budget does
-    not apply to it)."""
+    (spec §6.3/§6.6). The copy button is an InlineKeyboardButton with
+    CopyTextButton — it copies the direct link, no callback needed."""
     return InlineKeyboardMarkup([
-        [CopyTextButton(copy.BTN_COPY_LINK,
-                        api_kwargs={"copy_text": {"text": link}}),
+        [InlineKeyboardButton(copy.BTN_COPY_LINK, copy_text=CopyTextButton(link)),
          _button(copy.BTN_HOME, "nav:home"),
          _button(copy.BTN_TASKS, "nav:tasks")],
     ])
@@ -218,13 +215,8 @@ def track_keyboard(token: str, *, index: int | None = None,
 
 
 def large_file_keyboard(link: str) -> InlineKeyboardMarkup:
-    """[📋 Copy download link] [🏠 Home] [📥 Tasks] for the >50 MB case."""
-    from telegram import CopyTextButton
-
-    return InlineKeyboardMarkup([
-        [CopyTextButton(COPY_LINK_BUTTON, data=link)],
-        [_button(copy.BTN_HOME, "nav:home"), _button(copy.BTN_TASKS, "nav:tasks")],
-    ])
+    """[📋 Copy download link] [🏠 Home] [📥 Tasks] for the >50 MB case (legacy alias)."""
+    return too_large_keyboard(link)
 
 
 # ---------------------------------------------------------------------------

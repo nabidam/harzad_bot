@@ -29,11 +29,12 @@ def restricted(func):
 
     @wraps(func)
     async def wrapped(update, context, *args, **kwargs):
-        user_id = update.effective_user.id
+        user = getattr(update, "effective_user", None)
+        user_id = user.id if user else None
         # ADMINS entries are strings (split(',') of an env var); compare
         # as strings, or the check denies every user including admins.
-        if str(user_id) not in {a.strip() for a in ADMINS}:
-            print(f"Unauthorized access denied for {user_id}.")
+        if user_id is None or str(user_id) not in {a.strip() for a in ADMINS}:
+            logger.warning(f"Unauthorized access denied for {user_id}.")
             return
         return await func(update, context, *args, **kwargs)
 
@@ -129,13 +130,12 @@ def sync_user(func):
 
     @wraps(func)
     async def wrapped(update, context, *args, **kwargs):
-        assert update.message is not None
-        assert update.effective_user is not None
-
-        if _db_breaker.is_open:
-            logger.debug("sync_user: DB circuit open; skipping user sync")
-        else:
-            _spawn_db_task(_sync_user_to_db, update.effective_user)
+        user = getattr(update, "effective_user", None)
+        if user is not None:
+            if _db_breaker.is_open:
+                logger.debug("sync_user: DB circuit open; skipping user sync")
+            else:
+                _spawn_db_task(_sync_user_to_db, user)
 
         return await func(update, context, *args, **kwargs)
 
@@ -152,14 +152,14 @@ def log_message(func):
 
     @wraps(func)
     async def wrapped(update, context, *args, **kwargs):
-        assert update.message is not None
-        assert update.effective_user is not None
-
-        if _db_breaker.is_open:
-            logger.debug("log_message: DB circuit open; skipping message log")
-        else:
-            _spawn_db_task(_log_message_to_db,
-                           update.effective_user.id, update.message.text)
+        user = getattr(update, "effective_user", None)
+        msg = getattr(update, "message", None) or getattr(update, "effective_message", None)
+        text = msg.text if msg else None
+        if user is not None and text is not None:
+            if _db_breaker.is_open:
+                logger.debug("log_message: DB circuit open; skipping message log")
+            else:
+                _spawn_db_task(_log_message_to_db, user.id, text)
 
         return await func(update, context, *args, **kwargs)
 

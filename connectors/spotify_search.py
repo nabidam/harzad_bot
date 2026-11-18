@@ -21,6 +21,7 @@ logger = getLogger(__name__)
 MAX_RESULTS = 3
 # Plan 5.3: results cached in memory for 300s.
 CACHE_TTL_SECONDS = 300
+MAX_CACHE_SIZE = 100
 
 
 @dataclass
@@ -66,6 +67,17 @@ def _raw_search(term: str) -> list[TrackResult]:
     return results
 
 
+def _prune_cache(now: float) -> None:
+    """Prune expired search cache entries and enforce max cache capacity."""
+    stale = [k for k, (stamp, _) in _cache.items() if now - stamp >= CACHE_TTL_SECONDS]
+    for k in stale:
+        _cache.pop(k, None)
+    if len(_cache) > MAX_CACHE_SIZE:
+        sorted_keys = sorted(_cache.keys(), key=lambda k: _cache[k][0])
+        for k in sorted_keys[:len(_cache) - MAX_CACHE_SIZE]:
+            _cache.pop(k, None)
+
+
 async def search_tracks(term: str) -> list[TrackResult]:
     """Top track candidates for a plain-text query, cached 300s in memory.
 
@@ -75,6 +87,7 @@ async def search_tracks(term: str) -> list[TrackResult]:
     term = term.strip()
     key = term.lower()
     now = time.monotonic()
+    _prune_cache(now)
     hit = _cache.get(key)
     if hit is not None and now - hit[0] < CACHE_TTL_SECONDS:
         return hit[1]

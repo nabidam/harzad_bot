@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telegram.error import BadRequest
 from yt_dlp.utils import DownloadError
 
 import bot.handlers.tasks as tasks
@@ -205,6 +206,45 @@ async def test_single_video_full_flow(monkeypatch, tmp_path):
     assert task.kind == "youtube_video"
     assert task.status == DONE
     assert task.title == "T1"
+
+
+async def test_single_video_status_delete_failure_does_not_abort_finalization(
+    monkeypatch, tmp_path
+):
+    """If status.delete raises BadRequest('Message to delete not found')
+    during single-item delivery success, the flow does NOT crash: it still
+    completes with DONE, triggers react_message, and cleans up staging files."""
+    info = {"title": "T1", "ext": "mp4", "thumbnail": "http://t/x.webp"}
+    patch_ydl(
+        monkeypatch, yt_download, FakeYoutubeDL(None, info, SMALL_MP4, tmp_path)
+    )
+    update = make_update(VIDEO_URL)
+    context = make_context()
+    context.status_message.delete = AsyncMock(
+        side_effect=BadRequest("Message to delete not found")
+    )
+
+    await yt_download.run_video_download(update, context, VIDEO_URL)
+
+    # status.delete was attempted
+    context.status_message.delete.assert_awaited_once()
+
+    # react_message was still called with thumbs up
+    context.bot.set_message_reaction.assert_awaited_once()
+
+    # task completed with DONE
+    row = context.bot.send_message.await_args_list[0].kwargs[
+        "reply_markup"
+    ].inline_keyboard[0]
+    token = row[0].callback_data.removeprefix("task:cancel:")
+    registry = get_registry(context)
+    task = registry.get(token)
+    assert task is not None
+    assert task.status == DONE
+    assert task.note == "sent"
+
+    # staging files are cleaned up
+    assert not (tmp_path / "T1.mp4").exists()
 
 
 async def test_status_stages_follow_the_phase(monkeypatch, tmp_path):

@@ -200,6 +200,23 @@ async def run_media_flow(
     queue: asyncio.Queue = asyncio.Queue()
     cancel_flag = threading.Event()
 
+    async def _set_status(status, text: str, markup=None) -> None:
+        """Best-effort in-place status edit (the user may have deleted it)."""
+        if markup is None:
+            markup = (
+                keyboards.task_cancel_keyboard(
+                    task.token, cancel_label=cancel_label
+                )
+                if not cancel_flag.is_set()
+                else keyboards.home_tasks_row_keyboard()
+            )
+        try:
+            await status.edit_text(
+                text=text, parse_mode=ParseMode.HTML, reply_markup=markup
+            )
+        except TelegramError:
+            logger.warning("could not edit the status message", exc_info=True)
+
     def push(event) -> None:
         # worker thread -> loop: schedule the event onto the loop
         loop.call_soon_threadsafe(queue.put_nowait, event)
@@ -286,6 +303,9 @@ async def run_media_flow(
     try:
         async with progress.status_ticker(
             context.bot, chat_id, status.message_id, stages=stages,
+            reply_markup=lambda: keyboards.task_cancel_keyboard(
+                task.token, cancel_label=cancel_label
+            ) if not cancel_flag.is_set() else keyboards.home_tasks_row_keyboard(),
             parse_mode=ParseMode.HTML,
         ):
             worker_fut = asyncio.wrap_future(
@@ -418,7 +438,10 @@ async def run_media_flow(
     elif total == 1 and delivered:
         # success: no extra "all done" message (spec §4.2) — the file
         # is the answer
-        await status.delete()
+        try:
+            await status.delete()
+        except TelegramError:
+            logger.debug("status message already gone", exc_info=True)
         await react_message(update, context.bot, "👍")
         registry.finish(
             task.token, DONE,

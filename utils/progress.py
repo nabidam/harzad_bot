@@ -53,6 +53,7 @@ Stage = Tuple[int, Union[str, Callable[[int], str]]]
 @asynccontextmanager
 async def status_ticker(
     bot, chat_id, message_id, *, stages: Sequence[Stage] = (),
+    reply_markup=None,
     parse_mode: str | None = None,
     tick_seconds: float = TYPING_REFRESH_SECONDS,
 ):
@@ -107,6 +108,11 @@ async def status_ticker(
                         chat_id=chat_id,
                         message_id=message_id,
                         text=new_text,
+                        reply_markup=(
+                            reply_markup()
+                            if callable(reply_markup)
+                            else reply_markup
+                        ),
                         parse_mode=parse_mode,
                     )
                     next_stage += 1
@@ -138,11 +144,17 @@ async def live_status(bot, chat_id, text, *, reply_markup=None, parse_mode=None,
     the message itself is left to the caller to finish (edit/delete).
     """
     message = await bot.send_message(
-        chat_id=chat_id, text=text, reply_markup=reply_markup,
+        chat_id=chat_id, text=text,
+        reply_markup=(
+            reply_markup()
+            if callable(reply_markup)
+            else reply_markup
+        ),
         parse_mode=parse_mode,
     )
     async with status_ticker(
         bot, chat_id, message.message_id,
-        stages=stages, parse_mode=parse_mode, tick_seconds=tick_seconds,
+        stages=stages, reply_markup=reply_markup, parse_mode=parse_mode,
+        tick_seconds=tick_seconds,
     ):
         yield message

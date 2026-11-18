@@ -121,7 +121,7 @@ async def _deliver_spotify(context, chat_id: int, song, path: str) -> None:
             thumbnail=getattr(song, "cover_url", None),
             title=_song_title(song),
             performer=getattr(song, "artist", None),
-            duration=int((getattr(song, "duration", None) or 0) / 1000),
+            duration=int(getattr(song, "duration", 0) or 0),
             protect_content=False,
         )
     # delivered to Telegram: the local file is staging only

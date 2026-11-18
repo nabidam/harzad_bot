@@ -45,6 +45,8 @@ TASK_LABELS = {
 RECENT_KEEP = 20
 RECENT_SHOW = 5
 ACTIVE_PAGE_SIZE = 5
+MAX_FINISHED_TASKS_KEEP = 200
+MAX_FINISHED_TASK_AGE_SECONDS = 3600.0
 
 
 def make_token() -> str:
@@ -173,7 +175,25 @@ class TaskRegistry:
             task.note = note
         self._recent.insert(0, task)
         del self._recent[RECENT_KEEP:]
+        self.prune()
         return task
+
+    def prune(self) -> int:
+        """Prune old terminal tasks from memory to prevent unbounded growth."""
+        now = time.monotonic()
+        recent_tokens = {t.token for t in self._recent}
+        stale = [
+            token for token, t in self._tasks.items()
+            if not t.is_active()
+            and token not in recent_tokens
+            and (
+                (now - (t.finished_at or t.updated_at) > MAX_FINISHED_TASK_AGE_SECONDS)
+                or len(self._tasks) > MAX_FINISHED_TASKS_KEEP
+            )
+        ]
+        for token in stale:
+            self._tasks.pop(token, None)
+        return len(stale)
 
     def recent_for(self, owner_user_id: int, limit: int = RECENT_SHOW) -> list[Task]:
         return [t for t in self._recent if t.owner_user_id == owner_user_id][:limit]
