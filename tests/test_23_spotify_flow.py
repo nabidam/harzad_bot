@@ -13,8 +13,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
-from telegram.error import TelegramError
+from telegram.error import TelegramError, TimedOut
 
 import bot.handlers.music.spotify.download as download
 import bot.handlers.tasks as tasks
@@ -315,6 +316,67 @@ async def test_single_track_delivery_failure_sends_unexpected_card(tmp_path):
     task = get_registry(context).get(token)
     assert task.status == FAILED
     assert task.retry_payload == {"urls": [song.url]}
+    assert not (tmp_path / "T1.mp3").exists()  # staging file cleaned
+
+
+def _timed_out(cause):
+    err = TimedOut("Timed out")
+    err.__cause__ = cause  # what `raise TimedOut from err` does in PTB
+    return err
+
+
+async def test_single_track_send_read_timeout_counts_as_delivered(tmp_path):
+    """Incident 2026-11-17 13:14: a sendAudio whose RESPONSE timed out
+    after the body was fully uploaded still lands — the egress proxy
+    relays it late, so the "failed" track arrives right when the user
+    sends the NEXT link. A read timeout under the TimedOut therefore
+    counts as delivered: no failure card, no Retry offer, task DONE,
+    and the status becomes the honest in-flight note (no 👍, since the
+    arrival was never confirmed)."""
+    song = make_song("T1")
+    fake = FakeSpotdl([song], tmp_path)
+    context = make_context(fake)
+    context.bot.send_audio = AsyncMock(
+        side_effect=_timed_out(httpx.ReadTimeout("read timed out")))
+    update = make_update(TRACK_URL)
+
+    await download.run_spotify_download(update, context, TRACK_URL)
+
+    context.status_message.delete.assert_not_awaited()
+    context.bot.set_message_reaction.assert_not_awaited()
+    last = context.bot.edit_message_text.await_args.kwargs
+    assert last["text"] == copy.SPOTIFY_SENT_IN_FLIGHT
+    row = last["reply_markup"].inline_keyboard[0]
+    assert [b.callback_data for b in row] == ["nav:home", "nav:tasks"]
+
+    task = get_registry(context).get(_status_token(context))
+    assert task.status == DONE
+    assert task.note == "sent"
+    assert not (tmp_path / "T1.mp3").exists()  # body already out: file dropped
+
+
+async def test_single_track_send_write_timeout_is_failure(tmp_path):
+    """The mirror case: a timeout while the BODY was still being written
+    is a real failure (the file never fully left). The unexpected-error
+    card with Retry stands, exactly like any other failed send."""
+    song = make_song("T1")
+    fake = FakeSpotdl([song], tmp_path)
+    context = make_context(fake)
+    context.bot.send_audio = AsyncMock(
+        side_effect=_timed_out(httpx.WriteTimeout("write timed out")))
+    update = make_update(TRACK_URL)
+
+    await download.run_spotify_download(update, context, TRACK_URL)
+
+    last = context.bot.edit_message_text.await_args.kwargs
+    assert last["text"] == copy.ERROR_UNEXPECTED
+    row = last["reply_markup"].inline_keyboard[0]
+    token = _status_token(context)
+    assert [b.callback_data for b in row] == [
+        f"task:retry:{token}", "nav:home"]
+
+    task = get_registry(context).get(token)
+    assert task.status == FAILED
     assert not (tmp_path / "T1.mp3").exists()  # staging file cleaned
 
 

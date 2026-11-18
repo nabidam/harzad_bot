@@ -15,6 +15,7 @@ from logging import getLogger
 
 from telegram import Update
 from telegram.constants import ChatAction
+from telegram.error import TimedOut
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -22,7 +23,7 @@ from configurations.settings import DOWNLOAD_VIDEO_PATH, YT_COOKIE_FILE
 from utils import copy, keyboards
 from utils.constants import PLAYLIST
 from utils.constants.messages import BOT_ID, MEDIA_CAPTION
-from utils.helpers import escape_html, prepare_cover, prepare_link
+from utils.helpers import body_sent_before_timeout, escape_html, prepare_cover, prepare_link
 from utils.storage import cleanup_media
 from utils.youtube_dl import video_opts
 
@@ -78,17 +79,23 @@ def video_worker(url: str, opts: dict, cancel_flag, push) -> dict:
                     ydl.process_info(item, download=True)
                     filename = ydl.prepare_filename(item)
                     file_size = os.path.getsize(filename)
+                    mut = MutagenFile(filename)
+                    duration = (
+                        int(mut.info.length)
+                        if mut is not None and getattr(mut, "info", None) is not None
+                        else int(item.get("duration") or 0)
+                    )
                     item_result = {
                         "path": filename,
                         "title": item_title,
                         "url": item.get("url") or item.get("webpage_url"),
-                        "duration": int(MutagenFile(filename).info.length),
+                        "duration": duration,
                         "size_mb": round(file_size / (1024 * 1024), 2),
                         "thumbnail_url": item.get("thumbnail"),
                     }
                     outcome["items"].append(item_result)
                     push(("item_done", index, len(entries), item_result))
-                except DownloadError:
+                except (DownloadError, Exception):
                     logger.warning(
                         "yt-dlp failed on item %d/%d (%s)",
                         index, len(entries), item_title, exc_info=True,
@@ -126,25 +133,39 @@ async def deliver_video(context, update, chat_id: int, item: dict) -> str:
         return "linked"
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-    with open(item["path"], "rb") as f:
-        # distinct InputFile per field: each needs its own multipart
-        # part; the remote URL is webp, which Telegram's thumbnail
-        # field rejects
-        thumbnail_file = prepare_cover(item["path"])
-        cover_file = prepare_cover(item["path"])
-        await context.bot.send_video(
-            chat_id=chat_id,
-            video=f,
-            duration=item["duration"],
-            thumbnail=thumbnail_file if thumbnail_file is not None else item["thumbnail_url"],
-            cover=cover_file,
-            caption=MEDIA_CAPTION.format(
-                caption=escape_html(item["title"]), bot_id=BOT_ID
-            ),
-            parse_mode="HTML",
-            protect_content=False,
-            supports_streaming=True,
-        )
+    try:
+        with open(item["path"], "rb") as f:
+            # distinct InputFile per field: each needs its own multipart
+            # part; the remote URL is webp, which Telegram's thumbnail
+            # field rejects
+            thumbnail_file = prepare_cover(item["path"])
+            cover_file = prepare_cover(item["path"])
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=f,
+                duration=item["duration"],
+                thumbnail=thumbnail_file if thumbnail_file is not None else item["thumbnail_url"],
+                cover=cover_file,
+                caption=MEDIA_CAPTION.format(
+                    caption=escape_html(item["title"]), bot_id=BOT_ID
+                ),
+                parse_mode="HTML",
+                protect_content=False,
+                supports_streaming=True,
+            )
+    except TimedOut as err:
+        if body_sent_before_timeout(err):
+            # the body is fully out of the building; the file is still
+            # being relayed and will land (incident 2026-11-17: an upload
+            # that "failed" this way arrived as the reply to the NEXT
+            # link). Count it as sent, never as a retriable failure.
+            logger.warning("send_video response timed out for %r: body was "
+                           "fully uploaded and is still in flight — "
+                           "counting as sent", item.get("title"),
+                           exc_info=True)
+            cleanup_media(item["path"])
+            return "sent"
+        raise
     # delivered to Telegram: the local file is staging only
     cleanup_media(item["path"])
     return "sent"

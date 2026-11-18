@@ -250,6 +250,12 @@ SPOTIFY_SLOW: str = (
 SPOTIFY_VERY_SLOW: str = (
     "Still downloading {title}. There's no reliable finish time available yet."
 )
+# The upload body left our side, but Telegram's confirmation timed out:
+# the file is still being relayed and will appear (possibly late).
+SPOTIFY_SENT_IN_FLIGHT: str = (
+    "📤 The file is on its way — this connection is slow, so it may "
+    "take a moment to appear."
+)
 
 INSTAGRAM_ACCEPTED: str = "📥 Got it — checking this Instagram link…"
 INSTAGRAM_RESOLVING: str = "🔎 Getting Instagram media details…\n⏱ {elapsed}s elapsed."

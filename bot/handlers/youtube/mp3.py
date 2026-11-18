@@ -9,7 +9,8 @@ from logging import getLogger
 
 from telegram import Update
 from telegram.constants import ChatAction
-from pydub import AudioSegment
+from telegram.error import TimedOut
+from mutagen import File as MutagenFile
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -17,7 +18,7 @@ from configurations.settings import DOWNLOAD_MP3_PATH, YT_COOKIE_FILE
 from utils import copy, keyboards
 from utils.constants import PLAYLIST
 from utils.constants.messages import BOT_ID, MEDIA_CAPTION
-from utils.helpers import escape_html, prepare_link
+from utils.helpers import body_sent_before_timeout, escape_html, prepare_link
 from utils.storage import cleanup_media
 
 from bot.handlers.youtube import flow
@@ -78,18 +79,23 @@ def _mp3_worker(url: str, opts: dict, cancel_flag, push) -> dict:
                 try:
                     ydl.process_info(item, download=True)
                     filename = ydl.prepare_filename(item)
-                    audio = AudioSegment.from_file(filename, format="mp3")
+                    mut = MutagenFile(filename)
+                    duration = (
+                        int(mut.info.length)
+                        if mut is not None and getattr(mut, "info", None) is not None
+                        else int(item.get("duration") or 0)
+                    )
                     item_result = {
                         "path": filename,
                         "title": item_title,
                         "url": item.get("url") or item.get("webpage_url"),
-                        "duration": int(len(audio) / 1000),
+                        "duration": duration,
                         "size_mb": round(os.path.getsize(filename) / (1024 * 1024), 2),
                         "thumbnail_url": item.get("thumbnail"),
                     }
                     outcome["items"].append(item_result)
                     push(("item_done", index, len(entries), item_result))
-                except DownloadError:
+                except (DownloadError, Exception):
                     logger.warning(
                         "yt-dlp failed on item %d/%d (%s)",
                         index, len(entries), item_title, exc_info=True,
@@ -122,19 +128,33 @@ async def _deliver_audio(context, update, chat_id: int, item: dict) -> str:
         return "linked"
 
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-    with open(item["path"], "rb") as f:
-        await context.bot.send_audio(
-            chat_id=chat_id,
-            audio=f,
-            duration=item["duration"],
-            title=item["title"],
-            thumbnail=item["thumbnail_url"],
-            caption=MEDIA_CAPTION.format(
-                caption=escape_html(item["title"]), bot_id=BOT_ID
-            ),
-            parse_mode="HTML",
-            protect_content=False,
-        )
+    try:
+        with open(item["path"], "rb") as f:
+            await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=f,
+                duration=item["duration"],
+                title=item["title"],
+                thumbnail=item["thumbnail_url"],
+                caption=MEDIA_CAPTION.format(
+                    caption=escape_html(item["title"]), bot_id=BOT_ID
+                ),
+                parse_mode="HTML",
+                protect_content=False,
+            )
+    except TimedOut as err:
+        if body_sent_before_timeout(err):
+            # the body is fully out of the building; the file is still
+            # being relayed and will land (incident 2026-11-17: an upload
+            # that "failed" this way arrived as the reply to the NEXT
+            # link). Count it as sent, never as a retriable failure.
+            logger.warning("send_audio response timed out for %r: body was "
+                           "fully uploaded and is still in flight — "
+                           "counting as sent", item.get("title"),
+                           exc_info=True)
+            cleanup_media(item["path"])
+            return "sent"
+        raise
     # delivered to Telegram: the local file is staging only
     cleanup_media(item["path"])
     return "sent"

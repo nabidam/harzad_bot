@@ -30,13 +30,13 @@ from logging import getLogger
 
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import TelegramError
+from telegram.error import TelegramError, TimedOut
 
 from utils import copy, executor, keyboards, progress
 from utils.constants.states import SEARCH_INPUT_STATE
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
-from utils.helpers import escape_html, react_message
+from utils.helpers import body_sent_before_timeout, escape_html, react_message
 from utils.storage import cleanup_media
 from utils.tasks import CANCELLED, DONE, FAILED, get_registry
 from bot.handlers import common
@@ -107,25 +107,46 @@ def _song_url(song):
     return url
 
 
-async def _deliver_spotify(context, chat_id: int, song, path: str) -> None:
+async def _deliver_spotify(context, chat_id: int, song, path: str) -> bool:
     """Send one finished MP3 (spec §6.1), then drop the staging file.
 
     protect_content is off (owner decision 2026-10-31, spec §11.3):
     delivered media must stay downloadable and forwardable.
+
+    Returns True when the send's own response timed out AFTER the body
+    was fully uploaded (body_sent_before_timeout): the track is still in
+    flight through the egress proxy and will land, possibly late. It must
+    be counted as delivered — otherwise the flow shows the failure card
+    and the "failed" track still arrives, right when the user sends the
+    next link (incident 2026-11-17 13:14).
     """
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-    with open(path, "rb") as f:
-        await context.bot.send_audio(
-            chat_id=chat_id,
-            audio=f,
-            thumbnail=getattr(song, "cover_url", None),
-            title=_song_title(song),
-            performer=getattr(song, "artist", None),
-            duration=int(getattr(song, "duration", 0) or 0),
-            protect_content=False,
-        )
+    try:
+        with open(path, "rb") as f:
+            await context.bot.send_audio(
+                chat_id=chat_id,
+                audio=f,
+                thumbnail=getattr(song, "cover_url", None),
+                title=_song_title(song),
+                performer=getattr(song, "artist", None),
+                duration=int(getattr(song, "duration", 0) or 0),
+                protect_content=False,
+            )
+    except TimedOut as err:
+        if body_sent_before_timeout(err):
+            logger.warning(
+                "send_audio response timed out for %r: the body was fully "
+                "uploaded and is still in flight — counting as delivered",
+                _song_title(song), exc_info=True,
+            )
+            # the body is already out of the building: the staging file
+            # is no longer needed (a dead egress will not be saved by it)
+            cleanup_media(path)
+            return True
+        raise
     # delivered to Telegram: the local file is staging only
     cleanup_media(path)
+    return False
 
 
 async def _await_resolve_or_cancel(
@@ -240,6 +261,14 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
 
     async def _set_status(text: str, markup=None) -> None:
         # best-effort in-place edit (the user may have deleted it)
+        if markup is None:
+            markup = (
+                keyboards.task_cancel_keyboard(
+                    task.token, cancel_label=copy.BTN_RETRY_DOWNLOAD
+                )
+                if not task.cancel_event.is_set()
+                else keyboards.home_tasks_row_keyboard()
+            )
         try:
             await status.edit_text(
                 text=text, parse_mode=ParseMode.HTML, reply_markup=markup
@@ -316,6 +345,7 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
         ]
 
         delivered = 0
+        in_flight_count = 0  # sends whose response timed out after upload
         failed_items: list[tuple[str, str | None]] = []
         delivery_failed = False
         downloaded_paths: set[str] = set()
@@ -323,6 +353,9 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
 
         async with progress.status_ticker(
             context.bot, chat_id, status.message_id, stages=stages,
+            reply_markup=lambda: keyboards.task_cancel_keyboard(
+                task.token, cancel_label=copy.BTN_RETRY_DOWNLOAD
+            ) if not task.cancel_event.is_set() else keyboards.home_tasks_row_keyboard(),
             parse_mode=ParseMode.HTML,
         ):
             for index, song in enumerate(songs, start=1):
@@ -336,7 +369,10 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
                     copy.SPOTIFY_TRACK.format(
                         current=index, total=total,
                         title=escape_html(title[:60]), elapsed=task.elapsed(),
-                    )
+                    ),
+                    markup=keyboards.task_cancel_keyboard(
+                        task.token, cancel_label=copy.BTN_RETRY_DOWNLOAD
+                    ) if not task.cancel_event.is_set() else keyboards.home_tasks_row_keyboard(),
                 )
                 try:
                     result_song, path = await await_download_from_spotify(
@@ -367,8 +403,10 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
                     task.touch(item_done=index)
                     break
                 try:
-                    await _deliver_spotify(context, chat_id, result_song,
-                                           path)
+                    in_flight = await _deliver_spotify(context, chat_id,
+                                                       result_song, path)
+                    if in_flight:
+                        in_flight_count += 1
                 except TelegramError:
                     # a failed send is a failed item like a failed
                     # download: counted and retriable, never raised
@@ -396,13 +434,23 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
             await _set_status(text, keyboards.home_tasks_row_keyboard())
             registry.finish(task.token, CANCELLED, note=f"{delivered}/{total}")
         elif total == 1 and delivered:
-            # no extra "all done" message (spec §4.2): the file is the
-            # answer
-            try:
-                await status.delete()
-            except TelegramError:
-                logger.debug("status message already gone", exc_info=True)
-            await react_message(update, context.bot, "👍")
+            if in_flight_count:
+                # the body is fully out of the building but Telegram's
+                # confirmation timed out: the track is still being relayed
+                # and may take a moment to appear. Keep the status as the
+                # honest note instead of a silent success (and without the
+                # 👍, which would claim an arrival we did not see).
+                await _set_status(copy.SPOTIFY_SENT_IN_FLIGHT,
+                                  keyboards.home_tasks_row_keyboard())
+            else:
+                # no extra "all done" message (spec §4.2): the file is the
+                # answer
+                try:
+                    await status.delete()
+                except TelegramError:
+                    logger.debug("status message already gone",
+                                 exc_info=True)
+                await react_message(update, context.bot, "👍")
             registry.finish(task.token, DONE, note="sent")
         elif total == 1:
             # the single track never went out: the status becomes the

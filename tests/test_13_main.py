@@ -502,3 +502,57 @@ def test_music_state_searches_plain_text():
         if isinstance(h, MessageHandler) and h.filters is filters.TEXT
     ]
     assert any(h.callback is spotify_download.handler for h in text_handlers)
+
+
+# --- upload-aware request (incident 2026-11-17) ---------------------------------
+
+
+def _request_data(with_file: bool):
+    """A RequestData shaped like a real bot API call, with or without an
+    uploaded file part."""
+    from telegram import InputFile
+    from telegram.request import RequestData
+    from telegram.request._requestparameter import RequestParameter
+
+    params = [RequestParameter("chat_id", 1, None)]
+    if with_file:
+        params.append(RequestParameter(
+            "audio", None, [InputFile(b"x" * 8, filename="x.mp3")]))
+    return RequestData(params)
+
+
+async def test_upload_request_long_timeouts_for_files_only(monkeypatch):
+    """File uploads (multipart) get UPLOAD_TIMEOUT for read AND write;
+    small JSON calls keep the instance's normal timeouts.
+
+    This is the fix for the 2026-11-17 incident: the global 50 s read
+    timeout ran on upload responses while the egress proxy relayed the
+    body, so every few-MB sendAudio 'failed' client-side at the 50 s
+    mark — the body was already out, and the 'failed' track still
+    arrived in the chat, right when the user sent the next link."""
+    from telegram.request import BaseRequest
+
+    req = main.UploadAwareRequest(connect_timeout=30, read_timeout=50,
+                                  write_timeout=50)
+    super_do = AsyncMock(return_value=(200, b"{}"))
+    monkeypatch.setattr(main.HTTPXRequest, "do_request", super_do)
+
+    # multipart: both timeouts overridden to UPLOAD_TIMEOUT
+    await req.do_request("https://api.example/bot1/sendAudio", "POST",
+                         _request_data(with_file=True))
+    args = super_do.call_args.args
+    # (url, method, request_data, read_timeout, write_timeout, ...)
+    assert args[3] == main.UPLOAD_TIMEOUT
+    assert args[4] == main.UPLOAD_TIMEOUT
+
+    # JSON: the instance's own timeouts pass through untouched
+    await req.do_request("https://api.example/bot1/sendMessage", "POST",
+                         _request_data(with_file=False))
+    args = super_do.call_args.args
+    assert args[3] is BaseRequest.DEFAULT_NONE
+    assert args[4] is BaseRequest.DEFAULT_NONE
+
+    # an explicit caller timeout always wins over the upload override
+    await req.do_request("https://api.example/bot1/sendAudio", "POST",
+                         _request_data(with_file=True), read_timeout=7.0)
+    assert super_do.call_args.args[3] == 7.0

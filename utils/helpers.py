@@ -3,6 +3,8 @@ import io
 import logging
 import os
 import random
+
+import httpx
 from telegram import InputFile, ReactionTypeEmoji
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -50,6 +52,27 @@ async def react_message(update, bot: ExtBot, emoji: str):
     except TelegramError as err:
         logging.warning(f"Could not set reaction {emoji!r}: {err}")
 
+def body_sent_before_timeout(err: TelegramError) -> bool:
+    """True when a send timed out while WAITING FOR THE RESPONSE, after
+    the request body had been fully written (an httpx ReadTimeout under
+    the telegram.error.TimedOut).
+
+    PTB's httpx transport keeps the httpx exception as the TimedOut's
+    __cause__. A read timeout means the whole body already left our socket
+    (via the egress proxy): the backend is still completing the send, so
+    the media is still going to arrive. It must be counted as delivered —
+    reporting a failure (and offering Retry) makes the "failed" media show
+    up anyway, possibly right when the user sends the NEXT link
+    (incident 2026-11-17 13:14), and a retry would send it twice.
+    Write/connect timeouts mean the body never fully left: a real failure.
+    """
+    cause = err.__cause__
+    while cause is not None:
+        if isinstance(cause, httpx.ReadTimeout):
+            return True
+        cause = cause.__cause__
+    return False
+
 def escape_md(text):
     # The full Markdown-V2 special set, escaped explicitly: re.escape()
     # only escapes regex-special characters and its set changed across
@@ -90,11 +113,12 @@ async def send_image(bot: ExtBot, receiver, image, caption = None, keyboard = No
         protect_content=False,
     )
 
-def next_proxy():
-    print(PROXY_LIST)
-    if PROXY_LIST is not None:
-        choice = random.choices(PROXY_LIST)
-        return choice[0]
+def next_proxy() -> str:
+    if not PROXY_LIST or PROXY_LIST == "None":
+        return ""
+    proxies = [p.strip() for p in PROXY_LIST.split(",") if p.strip()]
+    if proxies:
+        return random.choice(proxies)
     return ""
 
 def prepare_link(path):

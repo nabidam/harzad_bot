@@ -19,6 +19,7 @@ from telegram.ext import (
     MessageHandler,
     PicklePersistence,
 )
+from telegram.request import BaseRequest, HTTPXRequest
 from PIL import Image
 from bot.conversations.main import main_conversation_handler
 from bot.handlers import callbacks, dispatch
@@ -37,6 +38,43 @@ from utils import storage
 from spotdl import SpotifyClient, Spotdl
 
 logger = getLogger(__name__)
+
+# Egress rides a flaky local proxy. PTB applies the *normal* read timeout
+# to file uploads too: the clock runs from when the body is fully written,
+# while Telegram only answers after the proxy has relayed the whole upload.
+# With a 50 s read timeout every few-MB sendAudio "failed" client-side while
+# the track was still in flight — it arrived in the chat minutes later, i.e.
+# right when the user sent the NEXT link, so the bot looked like it answered
+# the new link with the previous track (incident 2026-11-17 13:14). Uploads
+# therefore get their own long timeout; small JSON calls keep 50 s.
+UPLOAD_TIMEOUT = 600
+
+
+class UploadAwareRequest(HTTPXRequest):
+    """HTTPXRequest with a dedicated read/write timeout for file uploads.
+
+    Only multipart requests (requests carrying files) get UPLOAD_TIMEOUT;
+    everything else keeps the instance's normal timeouts. The override
+    applies when the caller did not pass an explicit timeout (PTB's
+    DEFAULT_NONE sentinel).
+    """
+
+    __slots__ = ()
+
+    async def do_request(self, url, method, request_data=None,
+                         read_timeout=BaseRequest.DEFAULT_NONE,
+                         write_timeout=BaseRequest.DEFAULT_NONE,
+                         connect_timeout=BaseRequest.DEFAULT_NONE,
+                         pool_timeout=BaseRequest.DEFAULT_NONE):
+        if request_data is not None and request_data.multipart_data:
+            if read_timeout is BaseRequest.DEFAULT_NONE:
+                read_timeout = UPLOAD_TIMEOUT
+            if write_timeout is BaseRequest.DEFAULT_NONE:
+                write_timeout = UPLOAD_TIMEOUT
+        return await super().do_request(
+            url, method, request_data, read_timeout, write_timeout,
+            connect_timeout, pool_timeout,
+        )
 
 
 async def post_init(application: Application):
@@ -343,11 +381,18 @@ if __name__ == "__main__":
                 #    .context_types(context_types)
                    .post_init(post_init)
                    # egress goes through a flaky proxy: tolerate slow/failed
-                   # bootstraps instead of dying on the first attempt
-                   .connect_timeout(30)
-                   .read_timeout(50)
-                   .write_timeout(50)
-                   .get_updates_read_timeout(50)
+                   # bootstraps instead of dying on the first attempt.
+                   # Both requests are explicit instances — setting
+                   # .request() disables the individual timeout setters,
+                   # and the polling request keeps its own (long-poll)
+                   # read timeout. File uploads ride UploadAwareRequest's
+                   # long timeout (UPLOAD_TIMEOUT, see above).
+                   .request(UploadAwareRequest(
+                       connect_timeout=30, read_timeout=50, write_timeout=50,
+                   ))
+                   .get_updates_request(HTTPXRequest(
+                       connection_pool_size=1, read_timeout=50,
+                   ))
                 #    .persistence(persistence)
                    .build())
 
