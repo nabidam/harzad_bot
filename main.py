@@ -24,7 +24,7 @@ from PIL import Image
 from bot.conversations.main import main_conversation_handler
 from bot.handlers import callbacks, dispatch
 from bot.handlers import inline as inline_query
-from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, SCRIPT_DIR
+from configurations.settings import SPOTIFY_CLIENT_SECRET, SPOTIFY_CLIENT_ID, DOWNLOAD_MP3_PATH, YT_COOKIE_FILE, YT_PROXY, TG_PROXY, SCRIPT_DIR
 from utils import copy, keyboards
 from utils.ack import answer_callback
 from web.app import start_server
@@ -387,11 +387,21 @@ if __name__ == "__main__":
                    # and the polling request keeps its own (long-poll)
                    # read timeout. File uploads ride UploadAwareRequest's
                    # long timeout (UPLOAD_TIMEOUT, see above).
+                   # TG_PROXY: this box has no direct egress (L7-blocked,
+                   # see docs/knowledge-base.md §5) and httpx — unlike
+                   # requests — never reads http_proxy/https_proxy env
+                   # vars, so the proxy must be passed explicitly. Without
+                   # it getMe can never connect and run_polling(
+                   # bootstrap_retries=-1) retries silently forever: the
+                   # process looks stuck with an empty console (boots of
+                   # 2026-11-19 and 2026-11-20 died exactly this way).
                    .request(UploadAwareRequest(
                        connect_timeout=30, read_timeout=50, write_timeout=50,
+                       proxy=TG_PROXY or None,
                    ))
                    .get_updates_request(HTTPXRequest(
                        connection_pool_size=1, read_timeout=50,
+                       proxy=TG_PROXY or None,
                    ))
                 #    .persistence(persistence)
                    .build())

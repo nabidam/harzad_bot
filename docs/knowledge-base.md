@@ -372,9 +372,11 @@ Arch Linux container. Networking is the central constraint:
   plain shell fail; lhr.life reachable directly (heartbeat).
 - **xray** at `127.0.0.1:10808` (mixed SOCKS5 + HTTP CONNECT) and `:20900`.
   Proxy egress `185.214.10.121` reaches Cloudflare + localhost.run.
-- Bot process runs with `HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:10808`,
-  `NO_PROXY=localhost,127.0.0.1`. Shell Bot API calls need `curl -x
-  http://127.0.0.1:10808`.
+- Bot process: requests/spotipy inherit `HTTPS_PROXY/HTTP_PROXY=
+  http://127.0.0.1:10808`, `NO_PROXY=localhost,127.0.0.1`; the PTB/Telegram
+  API calls need `TG_PROXY=http://127.0.0.1:10808` in `.env` (httpx does
+  not read the env vars — without it `run_polling` hangs in its bootstrap
+  retry loop). Shell Bot API calls need `curl -x http://127.0.0.1:10808`.
 - **vLLM** (AI backend): `http://127.0.0.1:40002/v1`, model `gemma4`
   (google/gemma-4-26B-A4B-it, 262k ctx), no auth, loopback-only, never proxied.
 - **Tunnel**: ssh reverse to `nokey@localhost.run` (`-tt`, no remote command),

@@ -45,6 +45,13 @@ DB_URI = os.environ["DB_URI"]
 YT_COOKIE_FILE = os.environ["YT_COOKIE_FILE"]
 YT_PROXY = os.environ["YT_PROXY"]
 
+# Proxy for the Telegram Bot API itself (PTB/HTTPXRequest). Empty = direct
+# egress. httpx does NOT read http_proxy/https_proxy env vars, so on this
+# box (direct egress L7-blocked) this must be set explicitly — e.g.
+# http://127.0.0.1:10808 (xray). Without it run_polling hangs in its
+# bootstrap retry loop (getMe can never connect).
+TG_PROXY = os.environ.get("TG_PROXY", "")
+
 # --- Mini App (aiohttp server embedded in the bot process) ---
 # The app serves the SPA and the API from one origin — Bot API 10.2 locks
 # WebApp methods to the registered Mini App domain, so they must share it.
