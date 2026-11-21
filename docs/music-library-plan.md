@@ -1,10 +1,13 @@
 # Harzad Bot — Music Library Plan
 
 **Date:** 2026-11-21
-**Status:** Agreed direction (owner). Phase A implemented 2026-11-21 on branch
-`music-library` — awaiting the live gate, then merge `--no-ff` per repo workflow.
+**Status:** Agreed direction (owner). Phase A (schema/capture/v1 card) done 2026-11-21;
+v2 menu + list rework done same day (owner rejected it as "not good enough yet").
+**UX v3** — the expert design `docs/music-library-ux-design.md`, approved by the
+owner 2026-11-21 — is now the contract; implementation plan in §12. Branch
+`music-library`; live gate on the v3 rework, then merge `--no-ff` per repo workflow.
 **Scope:** per-user music library, re-delivery of previously requested tracks, playlists
-**Related:** `HARZAD_UX_REDESIGN_SPEC.md` (P1 "persistent job history/favorites", P2 "Mini App media hub"), `PRODUCT.md` §8 (persistence = medium cost)
+**Related:** `HARZAD_UX_REDESIGN_SPEC.md` (P1 "persistent job history/favorites", P2 "Mini App media hub"), `PRODUCT.md` §8 (persistence = medium cost), `docs/music-library-design-brief.md` (handoff brief), `docs/music-library-ux-design.md` (approved UX spec)
 
 ---
 
@@ -172,7 +175,14 @@ Notes:
   insert-if-absent, so live-captured rows are never touched. Idempotent;
   `--dry-run` / `--limit` supported.
 
-## 5. Chat UX (Phase A — implemented)
+## 5. Chat UX (Phase A — v1 + v2, both superseded)
+
+> **Superseded by UX v3 (§12).** This section records the two chat designs
+> that were built before the expert design landed (v1 one-track card,
+> v2 menu + list of 5). The v3 screens replace both; the fixed plumbing
+> here — `nav:library` entry, private-chat gate, tokenized 300 s
+> snapshots, the §3 re-delivery ladder, breaker-guarded writes — all
+> carry over unchanged.
 
 Entry: new `📚 My music` button on the Home keyboard. **Deliberate deviation
 from spec §2.1's 4-row layout (agreed):** Home is now 5 rows — row 4 =
@@ -192,33 +202,45 @@ Buttons: `[🔎 Search music] [🏠 Home]`
 
 Buttons: `[🔁 Try again] [🏠 Home]` (Try again re-opens the view).
 
-**Library view:** one editable card, reusing the search-result carousel
-pattern (spec §5.3 — tokenized, 300 s TTL store, owner-checked, stale
-toast). The card shows one track, "Track {i} of {n}", over the user's
-last-requested tracks, page of 10.
+**Menu** (what `nav:library` renders — rework of 2026-11-21, owner
+decision: the one-track card was too many steps to find a track; no cover
+images, no one-at-a-time carousel):
 
-Caption (HTML, escaped):
+> 📚 <b>Your music</b>
+> {count} track(s) · newest first
 
-> 🎵 <b>{title}</b>
-> <i>{artist}</i>
-> 📀 {album} · 📥 requested {request_count}× · last {relative time, "2 d ago"}
-> Track {i} of {n}
+Buttons: `[🕒 Latest] [📄 More]` (More only while a 2nd page exists) and
+the escape row `[📥 Tasks] [🏠 Home]`. Phase B adds its rows (📃
+Playlists) above the escape row — the menu is the extension point, no
+dead buttons before a handler exists (spec §10).
 
-Keyboard (Phase A — `➕ Add to playlist` lands in Phase B on row 2; no dead
-buttons before its handler exists, spec §10):
+**List page:** one editable text card of **5 tracks in full** (no covers),
+newest request first, reusing the search-result tokenization (spec §5.3 —
+frozen page snapshot, 300 s TTL store, owner-checked, stale toast).
+
+Text (HTML, escaped), numbered rows:
+
+> 📚 <b>Your music</b> · page {page} of {pages}
+>
+> 1. <b>{title}</b>
+> <i>{artist}</i> · {album} · {m:ss}
+> 📥 {request_count}× · last {relative time, "2 d ago"}
+>
+> 2. …
+
+Keyboard:
 
 | Row | Buttons | Callback |
 |---|---|---|
-| 1 | `⬇️ Get again` (primary) · `🎧 30s Preview` | `lib:dl:<token>:<i>` · `lib:prev:<token>:<i>` |
-| 2 | `🗑 Remove` | `lib:rm:<token>:<i>` |
-| 3 | `◀ Previous` · `Next ▶` (page has >1 track) | `lib:prevcard:<token>:<i>` · `lib:next:<token>:<i>` |
-| 4 | `◀ Prev page` · `Next page ▶` (>1 page) | `lib:page:<n>` |
-| 5 | `📥 Tasks` · `🏠 Home` | `nav:tasks` · `nav:home` |
+| 1–5 | per track: `⬇️ Get again` (primary) · `🎧 30s Preview` · `🗑 Remove` | `lib:dl:<token>:<i>` · `lib:prev:<token>:<i>` · `lib:rm:<token>:<i>` |
+| 6 | `◀ Newer` (page > 1) · `Older ▶` (page < pages) | `lib:page:<n>` |
+| 7 | `📚 Menu` | `nav:library` |
+| 8 | `📥 Tasks` · `🏠 Home` | `nav:tasks` · `nav:home` |
 
-`<i>` is the 1-based position inside the token's frozen page snapshot —
-the search card's index-in-payload pattern, so two rendered cards from the
+`<i>` is the 1-based row inside the token's frozen page snapshot — the
+search card's index-in-payload pattern, so two rendered cards from the
 same snapshot never point at each other. All ≤64 bytes (longest:
-`lib:prevcard:` + 8-hex token + `:` + 2 digits = 23).
+`lib:prev:` + 8-hex token + `:` + 2 digits = 19).
 
 - **Get again** → the §3 delivery ladder. Cloud path: no download status —
   the file just arrives (early ack, `send_chat_action(UPLOAD_VOICE)` during
@@ -235,8 +257,6 @@ same snapshot never point at each other. All ≤64 bytes (longest:
   toast, never a fake success.
 - **Stale/unknown token, foreign owner, out-of-range index** → toast
   `This list expired. Open My music again.` and nothing runs.
-- **Carousel boundaries** → `Already showing the newest track.` /
-  `That's the oldest track on this page.`
 - **429 on a re-send** → visible wait message carrying the `retry_after`
   seconds (the tap is still there); not a toast, since the early ack already
   went out.
@@ -246,7 +266,7 @@ same snapshot never point at each other. All ≤64 bytes (longest:
 
 ## 6. Playlists (Phase B)
 
-- `📃 Playlists` button on the library card row (and Home, under My music).
+- `📃 Playlists` row on the My music menu (the §5 extension point).
 - List: up to 10 playlists, `⏵ Send all` · `✏️` (rename) · `🗑` per row.
 - **Send all** → task kind `playlist`: resolve each item's row, run the §3
   ladder per item, status `📤 Sending {playlist} — track {N}/{M}`, Cancel
@@ -271,6 +291,10 @@ path and has no such cap.
 
 ## 8. New callback inventory (≤64 bytes)
 
+> **Superseded by UX v3 (§12.3)** — the callback families below (v1/v2) are
+> retired; v2 payloads that may sit in the live chat become defensive
+> stale-toast patterns.
+
 Phase A (implemented):
 
 | Callback | Button | Stale behavior |
@@ -279,8 +303,7 @@ Phase A (implemented):
 | `lib:dl:<token>:<i>` | ⬇️ Get again | toast `This list expired. Open My music again.` |
 | `lib:prev:<token>:<i>` | 🎧 30s Preview | same toast |
 | `lib:rm:<token>:<i>` | 🗑 Remove | same toast |
-| `lib:prevcard:<token>:<i>` / `lib:next:<token>:<i>` | ◀ / ▶ | same toast; boundaries get first/last toasts |
-| `lib:page:<n>` | page nav | `n < 1` → page 1; `n > max` → toast `That page doesn't exist anymore.` |
+| `lib:page:<n>` | 🕒 Latest (1) · 📄 More (2) · ◀ Newer · Older ▶ | `n < 1` → page 1; `n > max` → toast `That page doesn't exist anymore.` |
 
 Phase B: `lib:add:<token>:<i>` (➕ Add to playlist, same stale toast), plus
 the `pl:*` family:
@@ -301,19 +324,21 @@ pattern and `nav:library` — conversation and group 1 alike.
 
 | Phase | Deliverable | Est. |
 |---|---|---|
-| **A** | Schema + models/cruds, `track_id` on TrackResult, delivery capture, `My music` card (re-send + preview + remove) | 1–2 days — **done 2026-11-21**, branch `music-library`, live gate pending |
-| **B** | Playlists: create/rename/delete, add/remove item, Send-all batch task | 1–2 days |
+| **A** | Schema + models/cruds, `track_id` on TrackResult, delivery capture, `My music` v1 card + v2 menu/list, log backfill | **done 2026-11-21** (tag `music-library-phase-a` marks pre-rework state) |
+| **A.2** | **UX v3 rework per `docs/music-library-ux-design.md` — §12 tasks A1–A6** (menu, shared list, detail, search, often/sort, reconciliation) | in progress 2026-11-21 |
+| **B** | Playlists: create/rename/delete, add/remove item, Send-all batch task (design §8, plan §12.7) | 1–2 days |
 | **C** | Mini App Music tab (grid, search, player, playlists) | 3–5 days |
 | Deferred | Manual tags, usage stats, lyrics, in-chat reordering UI | revisit on demand |
 
 Branch → live gate → confirm → merge, per the repo workflow (KB §12).
 
-Phase A test coverage: `tests/test_28_music_library.py` (CRUD against the
-live test DB, delivery capture incl. the in-flight metadata-only case,
-facade soft-failure, card render/stale/owner/private-gate, the full re-send
-ladder, keyboards) + updated `tests/test_03_keyboards.py` (5-row Home,
-`lib:*` patterns resolvable) + `tests/test_23_spotify_flow.py` isolating the
-flow suite from the capture write.
+Phase A test coverage: `tests/test_28_music_library.py` (42 tests: CRUD
+against the live test DB, delivery capture incl. the in-flight
+metadata-only case, facade soft-failure, menu/list render, stale/owner/
+private-gate, the full re-send ladder, keyboards) + updated
+`tests/test_03_keyboards.py` (5-row Home, `lib:*` patterns resolvable) +
+`tests/test_23_spotify_flow.py` isolating the flow suite from the capture
+write.
 
 ## 10. Risks and open questions
 
@@ -325,7 +350,8 @@ flow suite from the capture write.
    the docs; pacing + `retry_after` handling is the contract. Live gate: send a
    20-track playlist re-send and watch for 429s through the production proxy.
 3. **Cover URLs** (Spotify CDN) fetched by Telegram server-side can go stale —
-   library card falls back to text card (existing search-card property).
+   the chat list shows no covers (rework 2026-11-21); the exposure is now
+   only the Mini App grid (Phase C).
 4. **Persian copy** — all new strings go through `utils/copy.py` keys from day
    one (spec §14 localization rule); Persian itself stays P1 per spec.
 5. **YouTube MP3 into the library?** — deferred: no stable track id, metadata
@@ -341,3 +367,215 @@ flow suite from the capture write.
 - Rate-limit numeric table absent from the current docs page (verified 2026-11-21,
   incl. 2024 archive copy); flood control via 429 + `retry_after` is the
   documented mechanism.
+
+## 12. UX v3 implementation plan (approved 2026-11-21)
+
+The expert design `docs/music-library-ux-design.md` is the UX contract.
+This section is the implementation contract: what ships, in what order,
+exactly how. Everything in §3 (ladder, capture, breaker) is unchanged.
+
+### 12.1 Agreed decisions (owner, 2026-11-21)
+
+1. **Spotify URL sent during the search prompt** → auto-cancel the search
+   state and hand the link to the normal download flow (intent match),
+   state returns to Home.
+2. **Remove requires confirmation** (new vs v2 one-tap): the destructive
+   action now sits one accidental tap behind `⋯`, confirm it.
+3. **The Phase A menu ships with 4 destinations** (Latest / Search /
+   Often played / Browse all); the `🎼 Playlists` row appears only when
+   Phase B lands — no placeholder row (spec §10: no dead buttons).
+4. **Re-sent audio keeps the source list's keyboard** (v2 behavior,
+   unchanged): actions keep working from the delivered message.
+5. **Playlist partial failure (Phase B)**: completion card lists the
+   failed track names + `[🔁 Retry failed]` that re-sends only the
+   failures.
+6. **No cross-restart resume for Send all**: snapshots and the task
+   registry are in-memory (P0, spec §2.5). After a restart the task is
+   gone; re-tapping Send all re-sends the whole playlist. In-process
+   429 pause/resume is required; cross-restart is not.
+
+Design adaptations (deviations from the design doc, recorded here):
+
+- **Copy/callback naming**: the design's dotted `music.*` keys and
+  `music:*`/`playlist:*` payloads are mapped onto repo conventions —
+  flat `LIB_*`/`PL_*` keys in `utils/copy.py`, `lib:*`/`pl:*` callback
+  families (§8 reservation).
+- **Open on Spotify is a URL button** (design §5.1), not the
+  `music:spotify:<token>:<i>` callback its §15.2 also lists: URL
+  buttons survive process restarts, never go stale, and need no
+  payload.
+- **Search results keyboard at >5 results**: the design's
+  New-search + Previous/Next rows would make 9 rows (acceptance bar:
+  ≤8). Folded into one row `[◀ Previous] [🔎 New search] [Next ▶]`.
+- **Single-page lists show no page line** (resolves design §10.1
+  "Page 1 of 1" vs §12.3 "don't force pagination"): the count line is
+  `N tracks` when `pages == 1`, `N tracks · Page p of P` otherwise.
+- **Add to playlist on the detail screen lands with Phase B** (design
+  A3 lists it for A; it would be a dead button until B).
+
+### 12.2 Screen inventory (Phase A)
+
+| ID | Screen | Text (exact, HTML) | Keyboard rows (≤8 always) |
+|---|---|---|---|
+| M01 | My music menu | `📚 <b>Your music</b>` / `{count} {word} saved` / `Everything you've received, ready to listen again.` / `Choose where to start:` | A: `[🕒 Latest] [🔎 Search]` / `[⭐ Often played] [📄 Browse all]` / `[📥 Tasks] [🏠 Home]` (3 rows; B adds `[🎼 Playlists]` above the escape row) |
+| M02 | Track list (latest / often / browse ×3 sorts) | `📚 <b>Your music</b> · {source label}` / `{count} {word}[ · Page {page} of {pages}]` / rows `n. <b>{title}</b>` · `<i>{artist}</i> · {m:ss}` · `Requested once \| {n} times · Last {time} ago` / `Select a track to listen again or view more actions.` | 5× `[▶ n] [⋯ n]` + `[◀ Previous] [Next ▶]` (pages>1) + `[📚 Menu]` + escape |
+| M03 | Search prompt | `🔎 Search your music` / `Send a track title or artist name.` / `You can search using part of a title or artist.` / `Send /cancel to stop searching.` | `[✖ Cancel]` / `[📚 Menu]` / escape — + conversation state |
+| M04 | Sort selection | `📄 Browse all` / `Choose how your library should be ordered.` | `[🕒 Recently requested]` / `[📅 Recently added]` / `[🔤 Title A–Z]` / `[📚 Menu]` / escape |
+| M05 | Track detail | `🎵 Track details` / `<b>{title}</b>` / `Artist: {artist}` / `Album: {album}` / `Duration: {m:ss}` / `Requested: {n} times` / `Last requested: {time} ago` / `Added: {time} ago` / `What would you like to do?` | `[▶ Get again]` / `[🎧 30s Preview]` / `[🎵 Open on Spotify]` (URL) / `[🗑 Remove from library]` / `[◀ Back to tracks]` / `[📚 Menu]` / escape (7 rows; B adds Add-to-playlist = 8) |
+| M05b | Remove confirm | `🗑 Remove track?` / `<b>{title}</b>` / `{artist}` / `This removes the track from My music.` / `It does not delete previously sent messages.` | `[🗑 Yes, remove]` / `[◀ Keep track]` / `[📚 Menu]` / escape |
+| M06 | Search results / no results | `🔎 Search results: {query}` / `Found {count} tracks.` + M02 rows + prompt (or `🔎 No matching tracks` / `No tracks matched "{query}".` / `Try another title or artist name.`) | ≤5× `[▶ n] [⋯ n]` + `[🔎 New search]` (multi-page: folded into the page row) + `[📚 Menu]` + escape; no-results: `[🔎 Search again]` / `[📄 Browse all]` / `[📚 Menu]` / escape |
+| M07 | Often played empty | `⭐ Often played` / `Your frequently requested tracks will appear here as you listen again.` | `[🕒 Latest]` / `[🔎 Search]` / `[📚 Menu]` / escape |
+| S0 | Empty library | `LIB_NONE` copy (updated: "No music saved yet. Your tracks will appear here automatically when you receive music.") | `[🔎 Search music] [🏠 Home]` (global search — the library is empty) |
+| S1 | DB unavailable | `⚠ My music is temporarily unavailable.` / `Your library data could not be loaded.` / `Please try again shortly.` | `[🔁 Try again]` / `[🏠 Home]` |
+
+States S0/S1 render wherever a read returns None or total==0. Every
+library callback (new and old) answers a private-chat toast in groups
+and re-checks the owner `tg_id` server-side (plan §4 privacy).
+
+### 12.3 Callback inventory (v3, ≤64 bytes)
+
+Stateless menu destinations (work from any state, before /start):
+
+| Callback | Button | Destination | Bytes |
+|---|---|---|---|
+| `nav:library` | 📚 My music (Home) | M01 | 11 |
+| `lib:latest` | 🕒 Latest | M02 page 1 (latest) | 10 |
+| `lib:search` | 🔎 Search | M03 (+ state) | 10 |
+| `lib:often` | ⭐ Often played | M02 page 1 (often) or M07 | 9 |
+| `lib:browse` | 📄 Browse all | M04 | 10 |
+| `lib:sort:recent` / `lib:sort:added` / `lib:sort:az` | sort rows | M02 page 1 (browse) | 12–15 |
+
+Tokenized list actions — `T` names a frozen list-page snapshot,
+`i` the 1-based row:
+
+| Callback | Button | Stale |
+|---|---|---|
+| `lib:get:<T>:<i>` | ▶ i | expired toast |
+| `lib:more:<T>:<i>` | ⋯ i | expired toast |
+| `lib:page:<src>:<n>` (src ∈ latest\|often\|recent\|added\|az) | ◀ Previous / Next ▶ (browse-family lists) | `n > max` → page toast |
+| `lib:spg:<T>:<n>` | ◀ Previous / Next ▶ (search results) | expired toast |
+
+Tokenized detail actions — `D` names a frozen detail snapshot:
+
+| Callback | Button | Notes |
+|---|---|---|
+| `lib:dl:<D>` | ▶ Get again | fresh DB row read before the ladder |
+| `lib:pv:<D>` | 🎧 30s Preview | |
+| `lib:rm:<D>` | 🗑 Remove from library | edits card into M05b |
+| `lib:rmc:<D>` | 🗑 Yes, remove | executes, back to origin list |
+| `lib:keep:<D>` | ◀ Keep track | re-renders M05 |
+| `lib:back:<D>` | ◀ Back to tracks | re-reads origin list from DB |
+| — (URL button) | 🎵 Open on Spotify | `url=spotify_url`, no payload |
+
+Search state:
+
+| Trigger | Effect |
+|---|---|
+| `lib:search` (from M01) | edit → M03, state → LIBRARY_SEARCH |
+| `lib:scx` (✖ Cancel on M03) | toast `Search cancelled.`, edit → M01, state → HOME |
+| `/cancel` (in state) | same as above |
+| text in state, URL | link flow, state → HOME (decision 12.1.1) |
+| text in state, query | results (edit) or no-results, state → HOME |
+| `lib:scn` (🔎 New search / 🔎 Search again) | edit → M03, state → LIBRARY_SEARCH |
+
+Legacy (v2 cards still in the live chat — defensive toasts):
+
+| Pattern | Behavior |
+|---|---|
+| `lib:(dl\|prev\|rm):<8hex>:(\d+)` | expired toast |
+| `lib:page:(\d+)` (bare number) | expired toast |
+
+Longest payload: `lib:spg:` + 8-hex + `:` + 3 digits = 21 bytes.
+`utils/keyboards.py` keeps asserting ≤64 at button build.
+
+### 12.4 Snapshot schema
+
+One token store (`"library_pages"`, 8-hex tokens, 300 s TTL —
+existing `utils/tokens.py`), two shapes:
+
+```
+list:   {tg_id, source, sort, query, page, pages, total, tracks}
+detail: {tg_id, track_key, track, origin}
+```
+
+- `source` ∈ `latest | search | often | browse`; `sort` ∈
+  `recent | added | az | None`; `query` set only for `search`.
+  `tracks` = the frozen `LibraryTrack` rows of the rendered page.
+- `origin` = `{source, sort, query, page}` — the list the detail was
+  opened from. Back / remove re-read the DB under that context (a
+  fresh page, fresh token), so a removed row disappears and a
+  now-dead page falls back to page 1.
+- Re-send/preview never act on the snapshot's row: the handler re-reads
+  the track by `(tg_id, track_key)` first (fresh `file_id` if a
+  parallel delivery just captured it; missing row → not-found toast).
+
+### 12.5 Data reads
+
+- New `cruds.library.all_tracks(db, tg_id)` — the user's rows, stable
+  order. Replaces per-source SQL orderings.
+- New facade `utils.library.library_page(tg_id, source, sort, query,
+  page, page_size)` → `(page_tracks, total)`: one full user read on a
+  worker thread, then filter/sort/paginate in Python. Rationale: the
+  library is a few thousand rows max per user on a local Postgres
+  (sub-ms, ~200 KB); Python `casefold()` matching and sorting are
+  Unicode-correct regardless of DB collation (C-locale `lower()`/`ORDER
+  BY` would mis-sort diacritics and mis-case Turkish/Persian-adjacent
+  Latin). A SQL `ILIKE`/indexed variant is a later optimization, not
+  a v3 requirement.
+- Search matching: normalize NFC + collapse whitespace + `casefold`;
+  match = query substring of title, or of artist, or of
+  `title + " " + artist`. Relevance score (lower wins): title prefix 0,
+  title substring 1, artist prefix 2, artist substring 3,
+  combined-only 4; ties by `request_count` desc, `last_requested`
+  desc, title. Minimum query: 2 chars after normalization — 1 char
+  re-renders the prompt with the too-short line, stays in state.
+- New facade `utils.library.get_library_track(tg_id, track_key)` →
+  fresh `LibraryTrack | None` (the ladder's row source).
+- `read_library` (v2 page read) is retired with its call sites.
+
+### 12.6 Search conversation state
+
+- New state `LIBRARY_SEARCH_STATE = 6` (`utils/constants/states.py`).
+- In `bot/conversations/main.py` the state's chain is the shared
+  callbacks first (so `lib:*`/`nav:*` work mid-prompt), then a
+  `/cancel` CommandHandler bound to the search-cancel handler (before
+  the shared `/cancel` task handler — in this state `/cancel` means
+  "stop searching"), then the link handler wrapped to return
+  HOME_STATE (URL → download flow, decision 12.1.1), then the shared
+  command handlers, then the state's TEXT handler.
+- The TEXT handler: URL → link flow (HOME); <2 chars → too-short edit
+  (stay in state); else run the search on a worker thread, render
+  M06 or the no-results card, return HOME_STATE (result buttons then
+  run on the shared chain, exactly like the Spotify search card).
+- The prompt card is rendered by editing the clicked message; the
+  search entry points (`lib:search`, `lib:scn`) return the state
+  constant so the ConversationHandler records it.
+- DB failure mid-search → S1 unavailable card, state → HOME.
+
+### 12.7 Task breakdown
+
+Each task is a green commit on `music-library` (tests included); the
+live gate runs once, at the end of A6.
+
+| Task | Scope |
+|---|---|
+| **A1** | M01 menu (copy, keyboard with the destinations implemented so far, menu callbacks, empty/unavailable states on the new copy) + copy deck keys + tests |
+| **A2** | M02 shared list: snapshot schema §12.4, `library_page` reads, numbered `▶/⋯` rows (⋯ lands in A3), Previous/Next + stateless page callbacks, legacy v2 patterns → stale toast, re-sent-audio keyboard = source list keyboard, tests |
+| **A3** | M05 detail + M05b confirm: detail snapshot, `lib:dl/pv/rm/rmc/keep/back`, fresh-row ladder, remove with confirmation, origin-list restore, tests |
+| **A4** | Search: state, M03 prompt, M06 results + no-results, matching/relevance §12.5, cancel paths, URL handoff, `lib:spg` paging, tests |
+| **A5** | Often played (M02/M07) + Browse all (M04 + 3 sorts) + full 4-destination menu, tests |
+| **A6** | State reconciliation pass: group gate on every v3 callback, expired/restart toasts, 429, preview failure, ladder exhausted, not-found, S0/S1 on every render path; full-suite green; plan doc as-built |
+| **B1–B5** | Phase B (after the A6 gate): caps + case-insensitive name check, P01–P04 + prompts, membership add/remove, Send all batch (pace 1 msg/s, ladder per item, cancel, 429 pause/resume in-process, partial-failure review + Retry failed §12.1.5), regression |
+
+Build order note: A1 ships a menu that grows (A1: Latest only — no
+dead buttons); A4 adds the Search row, A5 adds Often/Browse. The
+final menu is the 4-destination grid above.
+
+### 12.8 Acceptance (from the design §17, as implemented)
+
+- 5 newest: 3 taps from Home; any known track: ≤5 at any library size.
+- ≤8 keyboard rows, ≤~30-char labels, no covers, 5 rows/page.
+- Every state in §12.2 with exact copy; every callback owner-checked,
+  private-chat-gated, ≤64 bytes.
+- Remove confirms; back restores the origin list; search is
+  cancel-able and its results go stale cleanly.
