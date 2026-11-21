@@ -17,12 +17,16 @@ from typing import Optional
 from telegram.ext import CallbackQueryHandler
 
 from bot.handlers import dispatch, help, tasks
+from bot.handlers.music import library as music_library
 from bot.handlers.music.spotify import search as spotify_search
 from bot.navigation import navigate, on_ai_tti_stale, on_back
 from utils.constants.keyboards import (
     CB_AI_TTI,
     CB_HELP,
+    CB_LIBRARY,
     CB_TASKS,
+    LIB_ACTION_CALLBACK_PATTERN,
+    LIB_PAGE_CALLBACK_PATTERN,
     SONG_ACTION_CALLBACK_PATTERN,
     SONG_ACTION_LEGACY_PATTERN,
     SEARCH_AGAIN_CALLBACK_PATTERN,
@@ -49,6 +53,12 @@ _SHARED_SPECS: list[tuple[Optional[str], Callable]] = [
     (SONG_ACTION_LEGACY_PATTERN, spotify_search.on_song_action_legacy),
     (SEARCH_CANCEL_CALLBACK_PATTERN, spotify_search.on_search_cancel),
     (SEARCH_AGAIN_CALLBACK_PATTERN, spotify_search.on_search_again),
+    # Music library card (plan §8): the tokenized action pattern before
+    # the stateless page pattern; nav:library sits with the other view
+    # callbacks (Tasks/Help) — a data-driven card, not a NAVIGATOR state.
+    (LIB_ACTION_CALLBACK_PATTERN, music_library.on_lib_action),
+    (LIB_PAGE_CALLBACK_PATTERN, music_library.on_lib_page),
+    (CB_LIBRARY, music_library.on_library_callback),
     (TASK_CANCEL_CALLBACK_PATTERN, tasks.on_task_cancel),
     (TASK_RETRY_CALLBACK_PATTERN, tasks.on_task_retry),
     (TASK_PAGE_CALLBACK_PATTERN, tasks.on_task_page),

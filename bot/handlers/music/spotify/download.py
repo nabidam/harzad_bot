@@ -32,7 +32,7 @@ from telegram import Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError, TimedOut
 
-from utils import copy, executor, keyboards, progress
+from utils import copy, executor, keyboards, library, progress
 from utils.constants.states import SEARCH_INPUT_STATE
 from utils.custom_context import MyContext
 from utils.decorators import send_action, sync_user, log_message
@@ -107,23 +107,45 @@ def _song_url(song):
     return url
 
 
-async def _deliver_spotify(context, chat_id: int, song, path: str) -> bool:
+def _delivery_file_ref(message):
+    """(file_id, chat_id, message_id) from a sent-audio message — the
+    cloud handles the music library stores for the re-send ladder
+    (plan §3). None when the response carries no usable audio file_id
+    (also the guard for mock responses in tests)."""
+    try:
+        audio = getattr(message, "audio", None)
+        file_id = getattr(audio, "file_id", None) if audio is not None else None
+        if isinstance(file_id, str) and file_id:
+            chat_id = getattr(message, "chat_id", None)
+            message_id = getattr(message, "message_id", None)
+            if chat_id is not None and message_id is not None:
+                return file_id, chat_id, message_id
+    except Exception:
+        logger.debug("could not read file refs from send response",
+                     exc_info=True)
+    return None
+
+
+async def _deliver_spotify(context, chat_id: int, song, path: str):
     """Send one finished MP3 (spec §6.1), then drop the staging file.
 
     protect_content is off (owner decision 2026-10-31, spec §11.3):
     delivered media must stay downloadable and forwardable.
 
-    Returns True when the send's own response timed out AFTER the body
-    was fully uploaded (body_sent_before_timeout): the track is still in
-    flight through the egress proxy and will land, possibly late. It must
-    be counted as delivered — otherwise the flow shows the failure card
-    and the "failed" track still arrives, right when the user sends the
-    next link (incident 2026-11-17 13:14).
+    Returns `(in_flight, file_ref)`. `in_flight` is True when the send's
+    own response timed out AFTER the body was fully uploaded
+    (body_sent_before_timeout): the track is still in flight through the
+    egress proxy and will land, possibly late. It must be counted as
+    delivered — otherwise the flow shows the failure card and the
+    "failed" track still arrives, right when the user sends the next
+    link (incident 2026-11-17 13:14). `file_ref` is the (file_id,
+    chat_id, message_id) triple for the music library, or None in the
+    in-flight case (no usable response — the row is metadata-only).
     """
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
     try:
         with open(path, "rb") as f:
-            await context.bot.send_audio(
+            message = await context.bot.send_audio(
                 chat_id=chat_id,
                 audio=f,
                 thumbnail=getattr(song, "cover_url", None),
@@ -142,11 +164,11 @@ async def _deliver_spotify(context, chat_id: int, song, path: str) -> bool:
             # the body is already out of the building: the staging file
             # is no longer needed (a dead egress will not be saved by it)
             cleanup_media(path)
-            return True
+            return True, None
         raise
     # delivered to Telegram: the local file is staging only
     cleanup_media(path)
-    return False
+    return False, _delivery_file_ref(message)
 
 
 async def _await_resolve_or_cancel(
@@ -403,10 +425,17 @@ async def run_spotify_download(update: Update, context: MyContext, url: str) -> 
                     task.touch(item_done=index)
                     break
                 try:
-                    in_flight = await _deliver_spotify(context, chat_id,
-                                                       result_song, path)
+                    in_flight, file_ref = await _deliver_spotify(
+                        context, chat_id, result_song, path
+                    )
                     if in_flight:
                         in_flight_count += 1
+                    # Music library (plan §4): capture the delivery for
+                    # the cloud re-send ladder. Soft-failing — a DB
+                    # outage must never break or delay the delivery.
+                    library.record_song_delivery(
+                        update.effective_user.id, song, file_ref
+                    )
                 except TelegramError:
                     # a failed send is a failed item like a failed
                     # download: counted and retriable, never raised

@@ -48,13 +48,14 @@ def home_tasks_row_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([_home_tasks_row()])
 
 
-# --- Home (spec §2.1, exact row layout) ------------------------------------
+# --- Home (spec §2.1 row layout + 📚 My music, music-library plan §5) ----
 
 home_keyboard = InlineKeyboardMarkup([
     [_action(copy.BTN_SEARCH, "nav:search")],
     [_button(copy.BTN_INSTAGRAM, "nav:ig"), _button(copy.BTN_YOUTUBE, "nav:yt")],
     [_button(copy.BTN_PINTEREST, "nav:pin"), _button(copy.BTN_AI, "nav:ai")],
-    [_button(copy.BTN_TASKS, "nav:tasks"), _button(copy.BTN_HELP, "nav:help")],
+    [_button(copy.BTN_TASKS, "nav:tasks"), _button(copy.BTN_LIBRARY, "nav:library")],
+    [_button(copy.BTN_HELP, "nav:help")],
 ])
 
 # --- Input screens (spec §2.2) ---------------------------------------------
@@ -217,6 +218,55 @@ def track_keyboard(token: str, *, index: int | None = None,
 def large_file_keyboard(link: str) -> InlineKeyboardMarkup:
     """[📋 Copy download link] [🏠 Home] [📥 Tasks] for the >50 MB case (legacy alias)."""
     return too_large_keyboard(link)
+
+
+# --- Music library (music-library plan §5) -----------------------------------
+
+def library_keyboard(token: str, *, index: int, total: int,
+                     page: int = 1, pages: int = 1) -> InlineKeyboardMarkup:
+    """One track card in the My music carousel.
+
+    `index` is the 1-based position inside the token's frozen page
+    snapshot (same pattern as the search card: the payload names its own
+    target, so two rendered cards never point at each other).
+    """
+    rows: list[list[InlineKeyboardButton]] = [
+        [_action(copy.BTN_LIB_GET_AGAIN, f"lib:dl:{token}:{index}"),
+         _action(copy.BTN_TRACK_PREVIEW, f"lib:prev:{token}:{index}")],
+        [_button(copy.BTN_LIB_REMOVE, f"lib:rm:{token}:{index}")],
+    ]
+    if total > 1:
+        rows.append([
+            _button(copy.BTN_TRACK_PREVIOUS, f"lib:prevcard:{token}:{index}"),
+            _button(copy.BTN_TRACK_NEXT, f"lib:next:{token}:{index}"),
+        ])
+    if pages > 1:
+        page_row: list[InlineKeyboardButton] = []
+        if page > 1:
+            page_row.append(_button(copy.BTN_LIB_PAGE_PREV, f"lib:page:{page - 1}"))
+        if page < pages:
+            page_row.append(_button(copy.BTN_LIB_PAGE_NEXT, f"lib:page:{page + 1}"))
+        if page_row:
+            rows.append(page_row)
+    rows.append([_button(copy.BTN_TASKS, "nav:tasks"),
+                 _button(copy.BTN_HOME, "nav:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def library_empty_keyboard() -> InlineKeyboardMarkup:
+    """The empty-library state: point at the two ways to fill it."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_SEARCH, "nav:search"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_unavailable_keyboard() -> InlineKeyboardMarkup:
+    """DB-down card: Try again re-opens the view (stateless callback)."""
+    return InlineKeyboardMarkup([
+        [_button(copy.BTN_LIB_TRY_AGAIN, "nav:library"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
 
 
 # ---------------------------------------------------------------------------

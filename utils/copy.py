@@ -38,6 +38,7 @@ BTN_PINTEREST: str = "📌 Pinterest"
 BTN_AI: str = "🤖 AI chat"
 BTN_TASKS: str = "📥 Tasks"
 BTN_HELP: str = "❓ Help"
+BTN_LIBRARY: str = "📚 My music"
 BTN_HOME: str = "🏠 Home"
 BTN_RETRY: str = "🔁 Retry"
 BTN_RETRY_DOWNLOAD: str = "⏹ Cancel download"
@@ -82,6 +83,7 @@ HELP_BODY: str = (
     "• Tap <b>Search music</b> or type a song name from Search Music.\n"
     "• In any chat, type <code>@harzad_bot artist song</code> to find music inline.\n"
     "• Tap <b>Tasks</b> to check or cancel work that's still running.\n"
+    "• Your requested songs live in <b>📚 My music</b> — bring any of them back anytime.\n"
     "• Use <b>AI chat</b> for a one-message question; each message is "
     "answered independently for now.\n\n"
     "Supported: YouTube, Instagram, Pinterest, TikTok, and Spotify. "
@@ -187,6 +189,51 @@ def track_caption(
         lines.append(" · ".join(meta_parts))
     lines.append(f"Match {index} of {total}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Music library (music-library plan §5)
+# ---------------------------------------------------------------------------
+
+LIB_NONE: str = (
+    "No music saved yet.\n"
+    "Search for a song or paste a Spotify link — everything you get "
+    "lands here automatically."
+)
+
+LIB_UNAVAILABLE: str = (
+    "Your music library is temporarily unavailable on our side. "
+    "Please try again shortly."
+)
+
+# The re-send ladder exhausted (no stored cloud copy, no link to retry).
+LIB_NO_RESEND: str = (
+    "I can't re-fetch this track anymore — the saved copy is gone and "
+    "there's no link to retry from. Search for it again to get it back."
+)
+
+# Flood control (429) on a single re-send: tell the user to wait, the
+# tap is still there.
+LIB_FLOOD_WAIT: str = (
+    "⏳ Telegram is rate-limiting me for a moment — "
+    "wait about {seconds} and tap <b>Get again</b> again."
+)
+
+BTN_LIB_GET_AGAIN: str = "⬇️ Get again"
+BTN_LIB_REMOVE: str = "🗑 Remove"
+BTN_LIB_PAGE_PREV: str = "◀ Prev page"
+BTN_LIB_PAGE_NEXT: str = "Next page ▶"
+BTN_LIB_TRY_AGAIN: str = "🔁 Try again"
+
+# Toasts (≤64 chars)
+TOAST_LIB_STALE: str = "This list expired. Open My music again."
+TOAST_LIB_REMOVED: str = "Removed from your library."
+TOAST_LIB_FAILED: str = "That didn't work — please try again."
+TOAST_LIB_FIRST: str = "Already showing the newest track."
+TOAST_LIB_LAST: str = "That's the oldest track on this page."
+TOAST_LIB_PAGE: str = "That page doesn't exist anymore."
+TOAST_LIB_PRIVATE: str = "The music library is private. Use it in a private chat."
+TOAST_LIB_FLOOD: str = "Telegram is slowing me down — try again shortly."
 
 
 # ---------------------------------------------------------------------------

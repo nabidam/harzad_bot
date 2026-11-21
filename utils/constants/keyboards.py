@@ -30,6 +30,7 @@ CB_AI_CHAT: str = "nav:ai:chat"      # legacy alias -> same
 CB_AI_TTI: str = "nav:ai:ttI"        # RETIRED: defensive stale handler only
 CB_TASKS: str = "nav:tasks"          # new: task list view
 CB_HELP: str = "nav:help"            # new: help page
+CB_LIBRARY: str = "nav:library"      # new: My music view (data-driven card)
 
 # --- search (spec §5) ----------------------------------------------------------
 # New tokenized cancel; the pre-token 8-hex `srx:c:` payload stays
@@ -57,6 +58,15 @@ YT_FMT_CALLBACK_PATTERN: str = r"^yt:fmt:([0-9a-f]{8}):(720|360|mp3)$"
 YT_CANCEL_CALLBACK_PATTERN: str = r"^yt:cancel:([0-9a-f]{8})$"
 # Legacy no-token payloads: cannot be resolved to a specific URL -> toast.
 YT_FMT_LEGACY_PATTERN: str = r"^yt:fmt:(720|360|mp3)$"
+
+# --- music library (music-library plan §5, §8) ----------------------------------
+# One tokenized card per page snapshot (token -> frozen page, 300 s TTL):
+#   lib:dl:<token>:<i>   lib:prev:<token>:<i>   lib:rm:<token>:<i>
+#   lib:prevcard:<token>:<i>   lib:next:<token>:<i>     (in-card carousel)
+#   lib:page:<n>                                              (DB re-read)
+# Groups: (1) action, (2) 8-hex token, (3) 1-based track index.
+LIB_ACTION_CALLBACK_PATTERN: str = r"^lib:(dl|prev|rm|prevcard|next):([0-9a-f]{8}):(\d+)$"
+LIB_PAGE_CALLBACK_PATTERN: str = r"^lib:page:(\d+)$"
 
 # --- tasks (spec §8) -------------------------------------------------------------
 TASK_CANCEL_CALLBACK_PATTERN: str = r"^task:cancel:([0-9a-f]{8})$"

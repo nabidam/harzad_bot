@@ -1,10 +1,11 @@
 """#3 utils.keyboards + constants — button/callback consistency (redesign).
 
 Invariants:
-- the Home keyboard matches spec §2.1 exactly (4 rows, one primary CTA);
+- the Home keyboard matches spec §2.1 + the music-library plan §5
+  (5 rows, one primary CTA, 📚 My music next to Tasks);
 - every input screen ends with [🏠 Home] [📥 Tasks] (spec §2.2);
 - every callback_data in any keyboard is either a NAVIGATOR key or a
-  known tokenized-action pattern (yt/song/task/search);
+  known tokenized-action pattern (yt/song/task/search/library);
 - every NAVIGATOR destination is reachable from Home;
 - no callback payload exceeds the Bot API 64-byte limit;
 - TTI has no visible entry point (spec §10).
@@ -43,6 +44,8 @@ ACTION_PATTERNS = [
     re.compile(CK.SONG_ACTION_LEGACY_PATTERN),
     re.compile(CK.SEARCH_CANCEL_CALLBACK_PATTERN),
     re.compile(CK.SEARCH_AGAIN_CALLBACK_PATTERN),
+    re.compile(CK.LIB_ACTION_CALLBACK_PATTERN),
+    re.compile(CK.LIB_PAGE_CALLBACK_PATTERN),
     re.compile(CK.TASK_CANCEL_CALLBACK_PATTERN),
     re.compile(CK.TASK_RETRY_CALLBACK_PATTERN),
     re.compile(CK.TASK_PAGE_CALLBACK_PATTERN),
@@ -79,12 +82,12 @@ def test_every_keyboard_callback_is_resolvable():
     }
     for name, markup in all_keyboards.items():
         for cb in _callbacks(markup):
-            # nav:* -> NAVIGATOR; tasks/help -> their own shared-chain
-            # handlers (views, not states); the rest must match a
-            # tokenized action family
+            # nav:* -> NAVIGATOR; tasks/help/library -> their own
+            # shared-chain handlers (views, not states); the rest must
+            # match a tokenized action family
             assert (
                 cb in NAVIGATOR
-                or cb in {CK.CB_TASKS, CK.CB_HELP}
+                or cb in {CK.CB_TASKS, CK.CB_HELP, CK.CB_LIBRARY}
                 or any(p.match(cb) for p in ACTION_PATTERNS)
             ), f"{name} button -> {cb!r} has no handler"
             assert len(cb.encode("utf-8")) <= 64, (
@@ -93,9 +96,10 @@ def test_every_keyboard_callback_is_resolvable():
 
 
 def test_home_keyboard_exact_layout():
-    """Spec §2.1: exact row layout and styles."""
+    """Spec §2.1 + music-library plan §5: exact row layout and styles
+    (My music shares the row with Tasks; Help drops to its own row)."""
     rows = kb.home_keyboard.inline_keyboard
-    assert len(rows) == 4
+    assert len(rows) == 5
     assert [b.text for b in rows[0]] == [copy.BTN_SEARCH]
     assert rows[0][0].callback_data == "nav:search"
     assert rows[0][0].style == kb.ACTION_STYLE  # the one primary CTA
@@ -103,8 +107,10 @@ def test_home_keyboard_exact_layout():
     assert [b.callback_data for b in rows[1]] == ["nav:ig", "nav:yt"]
     assert [b.text for b in rows[2]] == [copy.BTN_PINTEREST, copy.BTN_AI]
     assert [b.callback_data for b in rows[2]] == ["nav:pin", "nav:ai"]
-    assert [b.text for b in rows[3]] == [copy.BTN_TASKS, copy.BTN_HELP]
-    assert [b.callback_data for b in rows[3]] == ["nav:tasks", "nav:help"]
+    assert [b.text for b in rows[3]] == [copy.BTN_TASKS, copy.BTN_LIBRARY]
+    assert [b.callback_data for b in rows[3]] == ["nav:tasks", "nav:library"]
+    assert [b.text for b in rows[4]] == [copy.BTN_HELP]
+    assert [b.callback_data for b in rows[4]] == ["nav:help"]
     for row in rows[1:]:  # everything else stays neutral
         for b in row:
             assert b.style is None

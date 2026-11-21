@@ -79,6 +79,27 @@ def _guarded_db(fn, *args):
         _db_breaker.record_failure()
 
 
+def spawn_db_task(fn, *args):
+    """Public version of _spawn_db_task for other soft-failing DB
+    side effects (e.g. the music library's delivery capture): the same
+    off-loop, breaker-reporting, never-raises contract."""
+    return _spawn_db_task(fn, *args)
+
+
+def db_circuit_open() -> bool:
+    """True while the shared DB breaker is open — callers skip the DB
+    instead of paying a connect timeout per call."""
+    return _db_breaker.is_open
+
+
+def db_record_success() -> None:
+    _db_breaker.record_success()
+
+
+def db_record_failure() -> None:
+    _db_breaker.record_failure()
+
+
 async def join_pending_db_work() -> bool:
     """Await all in-flight background DB tasks.
 

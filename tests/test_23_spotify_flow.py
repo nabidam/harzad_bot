@@ -30,6 +30,17 @@ TRACK_URL = "https://open.spotify.com/track/abc"
 PLAYLIST_URL = "https://open.spotify.com/playlist/xyz"
 
 
+@pytest.fixture(autouse=True)
+def _no_library_capture(monkeypatch):
+    """This suite pins the delivery flow, not the music-library write:
+    the mock send responses carry no real file_id, and the shared test
+    DB must not accumulate rows from these fixtures. The capture path
+    itself is covered in test_28."""
+    monkeypatch.setattr(
+        download.library, "record_song_delivery", lambda *a, **k: None
+    )
+
+
 def make_song(name, url=None, artist="Artist", duration=200,
               cover="http://cover/x.jpg"):
     return SimpleNamespace(

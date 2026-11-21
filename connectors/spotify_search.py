@@ -26,7 +26,11 @@ MAX_CACHE_SIZE = 100
 
 @dataclass
 class TrackResult:
-    """Plan 5.2 return schema."""
+    """Plan 5.2 return schema.
+
+    `track_id` is the Spotify track id — the stable key the music
+    library dedups on (music-library plan §4).
+    """
 
     title: str
     artist: str
@@ -35,6 +39,7 @@ class TrackResult:
     spotify_url: str
     cover_url: Optional[str]
     preview_url: Optional[str]
+    track_id: Optional[str] = None
 
 
 # query(lower) -> (monotonic timestamp, results)
@@ -63,6 +68,7 @@ def _raw_search(term: str) -> list[TrackResult]:
             spotify_url=(item.get("external_urls") or {}).get("spotify") or "",
             cover_url=cover,
             preview_url=item.get("preview_url"),
+            track_id=item.get("id"),
         ))
     return results
 
