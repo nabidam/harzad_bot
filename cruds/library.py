@@ -109,6 +109,31 @@ def backfill_track(
     return True
 
 
+def all_tracks(db: Session, tg_id: int):
+    """Every row of the user's library, stable order (plan §12.5).
+
+    v3 filters/sorts/paginates in Python (Unicode casefolding,
+    collation-independent) instead of per-source SQL orderings — the
+    per-user set is a few thousand rows max on a local Postgres.
+    """
+    return (
+        db.query(Track)
+        .filter(Track.tg_id == tg_id)
+        .order_by(Track.id)
+        .all()
+    )
+
+
+def get_track(db: Session, tg_id: int, track_key: str) -> Track | None:
+    """One row by dedup key (plan §12.4: re-send/preview act on a
+    FRESH row read, never on the snapshot's possibly-stale copy)."""
+    return (
+        db.query(Track)
+        .filter(Track.tg_id == tg_id, Track.track_key == track_key)
+        .first()
+    )
+
+
 def recent_tracks(db: Session, tg_id: int, *, limit: int = 10, offset: int = 0):
     """The user's library, newest request first."""
     return (

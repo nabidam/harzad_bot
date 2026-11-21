@@ -192,48 +192,127 @@ def track_caption(
 
 
 # ---------------------------------------------------------------------------
-# Music library (music-library plan §5)
+# Music library, UX v3 (docs/music-library-ux-design.md, plan §12)
 # ---------------------------------------------------------------------------
 
+# S0 empty library (no music yet — point at the global search).
 LIB_NONE: str = (
     "No music saved yet.\n"
-    "Search for a song or paste a Spotify link — everything you get "
-    "lands here automatically."
+    "Your tracks will appear here automatically when you receive music."
 )
 
+# S1 database unavailable (distinct from S0 by design — plan §10.5).
 LIB_UNAVAILABLE: str = (
-    "Your music library is temporarily unavailable on our side. "
+    "⚠ My music is temporarily unavailable.\n"
+    "Your library data could not be loaded.\n"
     "Please try again shortly."
 )
 
 # The re-send ladder exhausted (no stored cloud copy, no link to retry).
 LIB_NO_RESEND: str = (
-    "I can't re-fetch this track anymore — the saved copy is gone and "
-    "there's no link to retry from. Search for it again to get it back."
+    "⚠ <b>Track unavailable</b>\n\n"
+    "We couldn't retrieve this track.\n"
+    "It may no longer be available from its source.\n"
+    "You can search for it again."
 )
 
-# Flood control (429) on a single re-send: tell the user to wait, the
-# tap is still there.
+# Flood control (429) on a single re-send: tell the user to wait; the
+# wait card's Try again button is the ORIGINAL action's payload, so it
+# can never bypass Telegram's retry window (plan §12.2 S1 row).
 LIB_FLOOD_WAIT: str = (
-    "⏳ Telegram is rate-limiting me for a moment — "
-    "wait about {seconds} and tap <b>Get again</b> again."
+    "⏳ <b>Telegram is limiting messages.</b>\n"
+    "Please wait {seconds} seconds, then try again."
 )
 
-BTN_LIB_GET_AGAIN: str = "⬇️ Get again"
-BTN_LIB_REMOVE: str = "🗑 Remove"
-BTN_LIB_PAGE_PREV: str = "◀ Prev page"
-BTN_LIB_PAGE_NEXT: str = "Next page ▶"
+# M01 — My music menu.
+LIB_MENU_TITLE: str = "📚 <b>Your music</b>"
+LIB_MENU_COUNT: str = "{count} {word} saved"
+LIB_MENU_DESC: str = "Everything you've received, ready to listen again."
+LIB_MENU_PROMPT: str = "Choose where to start:"
+
+# M02 — track list (latest / often / browse ×3 sorts / search results).
+LIB_LIST_TITLE: str = "📚 <b>Your music</b> · {source}"
+LIB_LIST_COUNT: str = "{count} {word}"
+LIB_LIST_PAGE: str = " · Page {page} of {pages}"
+LIB_LIST_PROMPT: str = "Select a track to listen again or view more actions."
+LIB_LIST_REQUESTED: str = "Requested {count} times"
+LIB_LIST_REQUESTED_ONCE: str = "Requested once"
+LIB_LIST_LAST: str = "Last {time}"
+
+# M02 source labels (list heading).
+LIB_SOURCE_LATEST: str = "Latest"
+LIB_SOURCE_OFTEN: str = "Often played"
+LIB_SOURCE_RECENT: str = "Recently requested"
+LIB_SOURCE_ADDED: str = "Recently added"
+LIB_SOURCE_AZ: str = "Title A–Z"
+
+# M03/M06 — library search.
+LIB_SEARCH_TITLE: str = "🔎 Search your music"
+LIB_SEARCH_PROMPT: str = "Send a track title or artist name."
+LIB_SEARCH_HINT: str = "You can search using part of a title or artist."
+LIB_SEARCH_CANCEL_HINT: str = "Send /cancel to stop searching."
+LIB_SEARCH_TOO_SHORT: str = "Please enter at least 2 characters."
+LIB_SEARCH_RESULTS: str = "🔎 Search results: <i>{query}</i>"
+LIB_SEARCH_FOUND: str = "Found {count} {word}."
+LIB_SEARCH_NONE: str = "🔎 No matching tracks"
+LIB_SEARCH_NONE_DESC: str = "No tracks matched \"{query}\"."
+LIB_SEARCH_NONE_TRY: str = "Try another title or artist name."
+
+# M04 — Browse all sort selection.
+LIB_BROWSE_TITLE: str = "📄 Browse all"
+LIB_SORT_PROMPT: str = "Choose how your library should be ordered."
+
+# M05 — track detail.
+LIB_DETAIL_TITLE: str = "🎵 Track details"
+LIB_DETAIL_ARTIST: str = "Artist: {artist}"
+LIB_DETAIL_ALBUM: str = "Album: {album}"
+LIB_DETAIL_DURATION: str = "Duration: {duration}"
+LIB_DETAIL_REQUESTED: str = "Requested: {count} times"
+LIB_DETAIL_LAST: str = "Last requested: {time}"
+LIB_DETAIL_ADDED: str = "Added: {time}"
+LIB_DETAIL_PROMPT: str = "What would you like to do?"
+
+# M05b — remove confirmation (owner decision 2026-11-21, plan §12.1.2).
+LIB_REMOVE_CONFIRM: str = (
+    "🗑 Remove track?\n\n<b>{title}</b>\n{artist}\n"
+    "This removes the track from My music.\n"
+    "It does not delete previously sent messages."
+)
+
+# M07 — Often played, no qualifying tracks yet.
+LIB_OFTEN_EMPTY: str = (
+    "⭐ <b>Often played</b>\n\n"
+    "Your frequently requested tracks will appear here as you listen again."
+)
+
+# Buttons.
+BTN_LIB_LATEST: str = "🕒 Latest"
+BTN_LIB_SEARCH: str = "🔎 Search"
+BTN_LIB_OFTEN: str = "⭐ Often played"
+BTN_LIB_BROWSE: str = "📄 Browse all"
+BTN_LIB_MENU: str = "📚 Menu"
+BTN_LIB_GET_AGAIN: str = "▶ Get again"
+BTN_LIB_SPOTIFY: str = "🎵 Open on Spotify"
+BTN_LIB_REMOVE: str = "🗑 Remove from library"
+BTN_LIB_BACK: str = "◀ Back to tracks"
 BTN_LIB_TRY_AGAIN: str = "🔁 Try again"
+BTN_LIB_RM_YES: str = "🗑 Yes, remove"
+BTN_LIB_KEEP: str = "◀ Keep track"
+BTN_LIB_SEARCH_CANCEL: str = "✖ Cancel"
+BTN_LIB_SEARCH_NEW: str = "🔎 New search"
+BTN_LIB_SEARCH_AGAIN: str = "🔎 Search again"
+BTN_LIB_SORT_RECENT: str = "🕒 Recently requested"
+BTN_LIB_SORT_ADDED: str = "📅 Recently added"
+BTN_LIB_SORT_AZ: str = "🔤 Title A–Z"
 
 # Toasts (≤64 chars)
-TOAST_LIB_STALE: str = "This list expired. Open My music again."
-TOAST_LIB_REMOVED: str = "Removed from your library."
+TOAST_LIB_STALE: str = "This list has expired. Open My music and try again."
+TOAST_LIB_REMOVED: str = "Track removed from My music."
 TOAST_LIB_FAILED: str = "That didn't work — please try again."
-TOAST_LIB_FIRST: str = "Already showing the newest track."
-TOAST_LIB_LAST: str = "That's the oldest track on this page."
 TOAST_LIB_PAGE: str = "That page doesn't exist anymore."
-TOAST_LIB_PRIVATE: str = "The music library is private. Use it in a private chat."
-TOAST_LIB_FLOOD: str = "Telegram is slowing me down — try again shortly."
+TOAST_LIB_PRIVATE: str = "My music is available in private chat only."
+TOAST_LIB_NOT_FOUND: str = "This track is no longer in your library."
+TOAST_LIB_SEARCH_CANCELLED: str = "Search cancelled."
 
 
 # ---------------------------------------------------------------------------

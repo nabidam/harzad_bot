@@ -44,8 +44,15 @@ ACTION_PATTERNS = [
     re.compile(CK.SONG_ACTION_LEGACY_PATTERN),
     re.compile(CK.SEARCH_CANCEL_CALLBACK_PATTERN),
     re.compile(CK.SEARCH_AGAIN_CALLBACK_PATTERN),
-    re.compile(CK.LIB_ACTION_CALLBACK_PATTERN),
+    # Music library UX v3 (plan §12.3): tokenized row/detail/search-page
+    # actions, stateless browse pages, sort rows, legacy v2 patterns.
+    re.compile(CK.LIB_ROW_CALLBACK_PATTERN),
+    re.compile(CK.LIB_DETAIL_CALLBACK_PATTERN),
+    re.compile(CK.LIB_SEARCH_PAGE_CALLBACK_PATTERN),
     re.compile(CK.LIB_PAGE_CALLBACK_PATTERN),
+    re.compile(CK.LIB_SORT_CALLBACK_PATTERN),
+    re.compile(CK.LIB_LEGACY_ACTION_CALLBACK_PATTERN),
+    re.compile(CK.LIB_LEGACY_PAGE_CALLBACK_PATTERN),
     re.compile(CK.TASK_CANCEL_CALLBACK_PATTERN),
     re.compile(CK.TASK_RETRY_CALLBACK_PATTERN),
     re.compile(CK.TASK_PAGE_CALLBACK_PATTERN),

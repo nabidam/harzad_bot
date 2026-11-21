@@ -59,14 +59,36 @@ YT_CANCEL_CALLBACK_PATTERN: str = r"^yt:cancel:([0-9a-f]{8})$"
 # Legacy no-token payloads: cannot be resolved to a specific URL -> toast.
 YT_FMT_LEGACY_PATTERN: str = r"^yt:fmt:(720|360|mp3)$"
 
-# --- music library (music-library plan §5, §8) ----------------------------------
-# One tokenized card per page snapshot (token -> frozen page, 300 s TTL):
-#   lib:dl:<token>:<i>   lib:prev:<token>:<i>   lib:rm:<token>:<i>
-#   lib:prevcard:<token>:<i>   lib:next:<token>:<i>     (in-card carousel)
-#   lib:page:<n>                                              (DB re-read)
-# Groups: (1) action, (2) 8-hex token, (3) 1-based track index.
-LIB_ACTION_CALLBACK_PATTERN: str = r"^lib:(dl|prev|rm|prevcard|next):([0-9a-f]{8}):(\d+)$"
-LIB_PAGE_CALLBACK_PATTERN: str = r"^lib:page:(\d+)$"
+# --- music library, UX v3 (plan §12.3) ---------------------------------------
+# Stateless menu destinations (M01) — no token, re-read the DB each tap:
+#   lib:latest  lib:search  lib:often  lib:browse
+# M04 sort rows (stateless — the sort is the whole identity):
+LIB_SORT_CALLBACK_PATTERN: str = r"^lib:sort:(recent|added|az)$"
+#
+# Browse-family list paging (stateless: source+sort+page fully identify
+# the page) — groups: (1) source, (2) page:
+LIB_PAGE_CALLBACK_PATTERN: str = r"^lib:page:(latest|often|recent|added|az):(\d+)$"
+# Search results paging (tokenized: the token freezes the query's result
+# set — the query itself never fits a 64-byte payload) — (1) token, (2) page:
+LIB_SEARCH_PAGE_CALLBACK_PATTERN: str = r"^lib:spg:([0-9a-f]{8}):(\d+)$"
+# List-row actions — T names a frozen list-page snapshot, i the 1-based
+# row: lib:get (▶ i, re-send) · lib:more (⋯ i, track detail).
+LIB_ROW_CALLBACK_PATTERN: str = r"^lib:(get|more):([0-9a-f]{8}):(\d+)$"
+# Detail actions — D names a frozen detail snapshot (the card IS the
+# track, so no index): dl re-send · pv preview · rm show confirm ·
+# rmc execute remove · keep back to detail · back to origin list.
+# "Open on Spotify" is a URL button (no payload, survives restarts).
+LIB_DETAIL_CALLBACK_PATTERN: str = r"^lib:(dl|pv|rm|rmc|keep|back):([0-9a-f]{8})$"
+# Library search conversation state entry/exit (exact payloads):
+LIB_SEARCH_START_CALLBACK: str = "lib:search"   # M01 → M03 (state entry)
+LIB_SEARCH_NEW_CALLBACK: str = "lib:scn"        # M06 → M03 (re-entry)
+LIB_SEARCH_CANCEL_CALLBACK: str = "lib:scx"     # M03 → M01 (state exit)
+#
+# Legacy v2 payloads (cards sent while the v2 UX was live) — the old
+# actions and the bare-number page id can no longer be resolved against
+# a v3 snapshot: defensive stale toast, same as the song-card legacy.
+LIB_LEGACY_ACTION_CALLBACK_PATTERN: str = r"^lib:(dl|prev|rm):([0-9a-f]{8}):(\d+)$"
+LIB_LEGACY_PAGE_CALLBACK_PATTERN: str = r"^lib:page:(\d+)$"
 
 # --- tasks (spec §8) -------------------------------------------------------------
 TASK_CANCEL_CALLBACK_PATTERN: str = r"^task:cancel:([0-9a-f]{8})$"

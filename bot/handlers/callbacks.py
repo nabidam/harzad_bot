@@ -25,8 +25,16 @@ from utils.constants.keyboards import (
     CB_HELP,
     CB_LIBRARY,
     CB_TASKS,
-    LIB_ACTION_CALLBACK_PATTERN,
+    LIB_DETAIL_CALLBACK_PATTERN,
+    LIB_LEGACY_ACTION_CALLBACK_PATTERN,
+    LIB_LEGACY_PAGE_CALLBACK_PATTERN,
     LIB_PAGE_CALLBACK_PATTERN,
+    LIB_ROW_CALLBACK_PATTERN,
+    LIB_SEARCH_CANCEL_CALLBACK,
+    LIB_SEARCH_NEW_CALLBACK,
+    LIB_SEARCH_PAGE_CALLBACK_PATTERN,
+    LIB_SEARCH_START_CALLBACK,
+    LIB_SORT_CALLBACK_PATTERN,
     SONG_ACTION_CALLBACK_PATTERN,
     SONG_ACTION_LEGACY_PATTERN,
     SEARCH_AGAIN_CALLBACK_PATTERN,
@@ -53,12 +61,27 @@ _SHARED_SPECS: list[tuple[Optional[str], Callable]] = [
     (SONG_ACTION_LEGACY_PATTERN, spotify_search.on_song_action_legacy),
     (SEARCH_CANCEL_CALLBACK_PATTERN, spotify_search.on_search_cancel),
     (SEARCH_AGAIN_CALLBACK_PATTERN, spotify_search.on_search_again),
-    # Music library card (plan §8): the tokenized action pattern before
-    # the stateless page pattern; nav:library sits with the other view
-    # callbacks (Tasks/Help) — a data-driven card, not a NAVIGATOR state.
-    (LIB_ACTION_CALLBACK_PATTERN, music_library.on_lib_action),
+    # Music library, UX v3 (plan §12.3): tokenized row and detail
+    # actions first (most specific), then search-result paging, the
+    # stateless browse pages, sort rows and the exact menu /
+    # search-state payloads; the legacy v2 patterns answer a defensive
+    # stale toast (v2 cards may still sit in the live chat).
+    # nav:library sits with the other view callbacks (Tasks/Help) — a
+    # data-driven card, not a NAVIGATOR state.
+    (LIB_ROW_CALLBACK_PATTERN, music_library.on_lib_row),
+    (LIB_DETAIL_CALLBACK_PATTERN, music_library.on_lib_detail),
+    (LIB_SEARCH_PAGE_CALLBACK_PATTERN, music_library.on_lib_search_page),
     (LIB_PAGE_CALLBACK_PATTERN, music_library.on_lib_page),
+    (LIB_SORT_CALLBACK_PATTERN, music_library.on_lib_sort),
+    (LIB_SEARCH_START_CALLBACK, music_library.on_lib_search_start),
+    (LIB_SEARCH_NEW_CALLBACK, music_library.on_lib_search_new),
+    (LIB_SEARCH_CANCEL_CALLBACK, music_library.on_lib_search_cancel),
+    (r"lib:latest", music_library.on_lib_destination),
+    (r"lib:often", music_library.on_lib_destination),
+    (r"lib:browse", music_library.on_lib_destination),
     (CB_LIBRARY, music_library.on_library_callback),
+    (LIB_LEGACY_ACTION_CALLBACK_PATTERN, music_library.on_lib_legacy),
+    (LIB_LEGACY_PAGE_CALLBACK_PATTERN, music_library.on_lib_legacy),
     (TASK_CANCEL_CALLBACK_PATTERN, tasks.on_task_cancel),
     (TASK_RETRY_CALLBACK_PATTERN, tasks.on_task_retry),
     (TASK_PAGE_CALLBACK_PATTERN, tasks.on_task_page),

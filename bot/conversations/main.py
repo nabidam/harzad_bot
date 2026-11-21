@@ -1,10 +1,15 @@
 """The main conversation (UX redesign §2).
 
-Six input modes (the old five-button tree is gone — each platform button
+Seven input modes (the old five-button tree is gone — each platform button
 goes straight to its input screen):
 
     HOME / SEARCH_INPUT / INSTAGRAM_INPUT / YOUTUBE_INPUT /
-    PINTEREST_INPUT / AI_CHAT
+    PINTEREST_INPUT / AI_CHAT / LIBRARY_SEARCH
+
+LIBRARY_SEARCH (music library in-library search, plan §12.6) is the
+odd one out: its /cancel means "stop searching" (not a task cancel)
+and a pasted media link hands off to the download flow instead of
+being treated as a query.
 
 In every mode the same shared chain runs first (bot/handlers/callbacks.py):
 tokenized action callbacks, then the stateless navigator, so a pasted
@@ -24,6 +29,7 @@ from telegram.ext import (
 )
 from bot.handlers import callbacks, dispatch, start
 from bot.handlers.instagram import download as instagram_download
+from bot.handlers.music import library as music_library
 from bot.handlers.music.spotify import download as spotify_download
 from bot.handlers.pinterest import main as pinterest_input
 from bot.handlers.youtube import main as youtube_input
@@ -34,6 +40,7 @@ from utils.constants.states import (
     AI_CHAT_STATE,
     HOME_STATE,
     INSTAGRAM_INPUT_STATE,
+    LIBRARY_SEARCH_STATE,
     PINTEREST_INPUT_STATE,
     SEARCH_INPUT_STATE,
     YOUTUBE_INPUT_STATE,
@@ -46,6 +53,22 @@ _media_url_filter = dispatch.MediaUrlFilter()
 _link_handler = MessageHandler(_media_url_filter, dispatch.handle_link)
 
 _shared_callbacks = callbacks.shared_callback_handlers()
+
+
+async def _lib_search_link(update, context):
+    """A media link pasted during the library search prompt (owner
+    decision, plan §12.1.1): hand it to the normal download flow and
+    leave the search state — the next plain text means Home again."""
+    context.user_data.pop(music_library.LIB_SEARCH_CARD_KEY, None)
+    await dispatch.handle_link(update, context)
+    return HOME_STATE
+
+
+_LIB_SEARCH_LINK = MessageHandler(_media_url_filter, _lib_search_link)
+# In this state /cancel means "stop searching" — it must sit BEFORE the
+# shared task-cancel handler (spec: /cancel is otherwise a task verb).
+_LIB_SEARCH_CANCEL = CommandHandler("cancel",
+                                    music_library.on_lib_search_cancel_command)
 
 _STATE_HANDLERS = {
     HOME_STATE: MessageHandler(filters.TEXT, start.on_home_text),
@@ -68,6 +91,17 @@ def main_conversation_handler():
         ]
         for state in _STATE_HANDLERS
     }
+    # The library search prompt (plan §12.6): the shared callback chain
+    # first (so lib:*/nav:* work mid-prompt), then the search /cancel,
+    # then the link handoff, the shared commands, and the state's TEXT
+    # handler (the query itself).
+    states[LIBRARY_SEARCH_STATE] = [
+        *_shared_callbacks,
+        _LIB_SEARCH_CANCEL,
+        _LIB_SEARCH_LINK,
+        *shared_handlers.shared_handlers,
+        MessageHandler(filters.TEXT, music_library.on_lib_search_text),
+    ]
     return ConversationHandler(
         entry_points=[CommandHandler("start", start.handler)],
         states=states,

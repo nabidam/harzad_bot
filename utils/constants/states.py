@@ -15,6 +15,10 @@ INSTAGRAM_INPUT_STATE = 2
 YOUTUBE_INPUT_STATE = 3
 PINTEREST_INPUT_STATE = 4
 AI_CHAT_STATE = 5
+# In-library search prompt (UX v3, plan §12.6): the next text message
+# is a search of the user's own library — a different intent from
+# SEARCH_INPUT (fresh Spotify search + download).
+LIBRARY_SEARCH_STATE = 6
 
 # --- compatibility aliases (legacy state names -> same logical modes) ---
 START_STATE = HOME_STATE

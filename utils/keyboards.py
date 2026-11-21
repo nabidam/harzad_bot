@@ -220,41 +220,179 @@ def large_file_keyboard(link: str) -> InlineKeyboardMarkup:
     return too_large_keyboard(link)
 
 
-# --- Music library (music-library plan §5) -----------------------------------
+# --- Music library, UX v3 (plan §12.2/§12.3) -----------------------------------
+# One active card that morphs (in-place edits); every screen carries its
+# own way back + the global escape row. Item-level buttons always carry
+# the snapshot token + 1-based row (never the title — design §12.1:
+# numbered association, no RTL/width breakage). No screen exceeds eight
+# keyboard rows (design §4.3).
 
-def library_keyboard(token: str, *, index: int, total: int,
-                     page: int = 1, pages: int = 1) -> InlineKeyboardMarkup:
-    """One track card in the My music carousel.
+def library_menu_keyboard() -> InlineKeyboardMarkup:
+    """M01 — the four Phase A destinations, then the escape row.
+    Phase B inserts its `[🎼 Playlists]` row above the escape row
+    (plan §12.1.3 — no placeholder before then)."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_LIB_LATEST, "lib:latest"),
+         _button(copy.BTN_LIB_SEARCH, "lib:search")],
+        [_button(copy.BTN_LIB_OFTEN, "lib:often"),
+         _button(copy.BTN_LIB_BROWSE, "lib:browse")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
 
-    `index` is the 1-based position inside the token's frozen page
-    snapshot (same pattern as the search card: the payload names its own
-    target, so two rendered cards never point at each other).
+
+def library_list_keyboard(token: str, *, source: str, sort: str | None,
+                          page: int, pages: int, count: int) -> InlineKeyboardMarkup:
+    """M02 — one `[▶ n] [⋯ n]` row per track of the frozen page, then
+    Previous/Next (pages>1), Menu, escape. Browse-family lists page via
+    the stateless `lib:page:<source>:<n>` payload; search results use
+    the tokenized `lib:spg:<token>:<n>` (the query can't ride a
+    payload). At most 5+1+1+1 = 8 rows.
+
+    The same keyboard is attached to re-sent audio so the actions keep
+    working from the delivered message (plan §12.1.4).
     """
     rows: list[list[InlineKeyboardButton]] = [
-        [_action(copy.BTN_LIB_GET_AGAIN, f"lib:dl:{token}:{index}"),
-         _action(copy.BTN_TRACK_PREVIEW, f"lib:prev:{token}:{index}")],
-        [_button(copy.BTN_LIB_REMOVE, f"lib:rm:{token}:{index}")],
+        [_action(f"▶ {i}", f"lib:get:{token}:{i}"),
+         _button(f"⋯ {i}", f"lib:more:{token}:{i}")]
+        for i in range(1, count + 1)
     ]
-    if total > 1:
-        rows.append([
-            _button(copy.BTN_TRACK_PREVIOUS, f"lib:prevcard:{token}:{index}"),
-            _button(copy.BTN_TRACK_NEXT, f"lib:next:{token}:{index}"),
-        ])
     if pages > 1:
         page_row: list[InlineKeyboardButton] = []
+        if source == "search":
+            prev_cb = f"lib:spg:{token}:{page - 1}"
+            next_cb = f"lib:spg:{token}:{page + 1}"
+        else:
+            # browse pages carry their sort (the order is part of the
+            # page's identity); latest/often are fixed orders
+            key = sort if source == "browse" else source
+            prev_cb = f"lib:page:{key}:{page - 1}"
+            next_cb = f"lib:page:{key}:{page + 1}"
         if page > 1:
-            page_row.append(_button(copy.BTN_LIB_PAGE_PREV, f"lib:page:{page - 1}"))
+            page_row.append(_button(copy.BTN_TRACK_PREVIOUS, prev_cb))
         if page < pages:
-            page_row.append(_button(copy.BTN_LIB_PAGE_NEXT, f"lib:page:{page + 1}"))
+            page_row.append(_button(copy.BTN_TRACK_NEXT, next_cb))
         if page_row:
             rows.append(page_row)
+    rows.append([_button(copy.BTN_LIB_MENU, "nav:library")])
     rows.append([_button(copy.BTN_TASKS, "nav:tasks"),
                  _button(copy.BTN_HOME, "nav:home")])
     return InlineKeyboardMarkup(rows)
 
 
+def library_search_results_keyboard(token: str, *, page: int, pages: int,
+                                    count: int,
+                                    start: int = 1) -> InlineKeyboardMarkup:
+    """M06 — same rows as M02 plus `[🔎 New search]`; on multi-page
+    results the New-search button folds into the page row so the screen
+    stays at eight rows (plan §12.1 adaptation). `start` is the first
+    row number = the first result's position in the frozen full set, so
+    the button labels match the printed numbers and the button index
+    resolves into the snapshot's FULL track list."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [_action(f"▶ {i}", f"lib:get:{token}:{i}"),
+         _button(f"⋯ {i}", f"lib:more:{token}:{i}")]
+        for i in range(start, start + count)
+    ]
+    if pages > 1:
+        page_row: list[InlineKeyboardButton] = []
+        if page > 1:
+            page_row.append(_button(
+                copy.BTN_TRACK_PREVIOUS, f"lib:spg:{token}:{page - 1}"))
+        page_row.append(_button(copy.BTN_LIB_SEARCH_NEW, "lib:scn"))
+        if page < pages:
+            page_row.append(_button(
+                copy.BTN_TRACK_NEXT, f"lib:spg:{token}:{page + 1}"))
+        rows.append(page_row)
+    else:
+        rows.append([_button(copy.BTN_LIB_SEARCH_NEW, "lib:scn")])
+    rows.append([_button(copy.BTN_LIB_MENU, "nav:library")])
+    rows.append([_button(copy.BTN_TASKS, "nav:tasks"),
+                 _button(copy.BTN_HOME, "nav:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def library_search_none_keyboard() -> InlineKeyboardMarkup:
+    """M06 zero-result state."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_LIB_SEARCH_AGAIN, "lib:scn"),
+         _button(copy.BTN_LIB_BROWSE, "lib:browse")],
+        [_button(copy.BTN_LIB_MENU, "nav:library")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_search_prompt_keyboard() -> InlineKeyboardMarkup:
+    """M03 — the search-prompt card (its Cancel exits the conversation
+    state; the TEXT handler owns the query)."""
+    return InlineKeyboardMarkup([
+        [_button(copy.BTN_LIB_SEARCH_CANCEL, "lib:scx")],
+        [_button(copy.BTN_LIB_MENU, "nav:library")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_sort_keyboard() -> InlineKeyboardMarkup:
+    """M04 — Browse all sort selection (stateless callbacks)."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_LIB_SORT_RECENT, "lib:sort:recent")],
+        [_button(copy.BTN_LIB_SORT_ADDED, "lib:sort:added")],
+        [_button(copy.BTN_LIB_SORT_AZ, "lib:sort:az")],
+        [_button(copy.BTN_LIB_MENU, "nav:library")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_detail_keyboard(token: str,
+                            spotify_url: str | None = None) -> InlineKeyboardMarkup:
+    """M05 — one action per row (the detail is the management screen,
+    design §5). "Open on Spotify" is a URL button when the row carries
+    a link — it survives restarts and never goes stale (plan §12.1).
+    Phase B inserts Add-to-playlist above Remove (8th row)."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [_action(copy.BTN_LIB_GET_AGAIN, f"lib:dl:{token}")],
+        [_action(copy.BTN_TRACK_PREVIEW, f"lib:pv:{token}")],
+    ]
+    if spotify_url:
+        rows.append([_button(copy.BTN_LIB_SPOTIFY, url=spotify_url)])
+    rows += [
+        [_button(copy.BTN_LIB_REMOVE, f"lib:rm:{token}")],
+        [_button(copy.BTN_LIB_BACK, f"lib:back:{token}")],
+        [_button(copy.BTN_LIB_MENU, "nav:library")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def library_remove_confirm_keyboard(token: str) -> InlineKeyboardMarkup:
+    """M05b — remove confirmation (edits the detail card in place)."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_LIB_RM_YES, f"lib:rmc:{token}")],
+        [_button(copy.BTN_LIB_KEEP, f"lib:keep:{token}")],
+        [_button(copy.BTN_LIB_MENU, "nav:library")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_often_empty_keyboard() -> InlineKeyboardMarkup:
+    """M07 — no qualifying tracks yet: point at the other ways in."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_LIB_LATEST, "lib:latest"),
+         _button(copy.BTN_LIB_SEARCH, "lib:search")],
+        [_button(copy.BTN_LIB_MENU, "nav:library")],
+        [_button(copy.BTN_TASKS, "nav:tasks"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
 def library_empty_keyboard() -> InlineKeyboardMarkup:
-    """The empty-library state: point at the two ways to fill it."""
+    """S0 — empty library: point at the global music search (the only
+    way to fill it)."""
     return InlineKeyboardMarkup([
         [_action(copy.BTN_SEARCH, "nav:search"),
          _button(copy.BTN_HOME, "nav:home")],
@@ -262,9 +400,30 @@ def library_empty_keyboard() -> InlineKeyboardMarkup:
 
 
 def library_unavailable_keyboard() -> InlineKeyboardMarkup:
-    """DB-down card: Try again re-opens the view (stateless callback)."""
+    """S1 — DB down: Try again re-opens the view (stateless callback)."""
     return InlineKeyboardMarkup([
         [_button(copy.BTN_LIB_TRY_AGAIN, "nav:library"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_no_resend_keyboard() -> InlineKeyboardMarkup:
+    """Ladder exhausted: honest failure + the two ways back to the
+    music (plan §12.2)."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_SEARCH, "nav:search"),
+         _button(copy.BTN_LIBRARY, "nav:library"),
+         _button(copy.BTN_HOME, "nav:home")],
+    ])
+
+
+def library_flood_wait_keyboard(original_callback: str) -> InlineKeyboardMarkup:
+    """429 on a single re-send (plan §12.2 S1): the wait card's
+    Try again is the ORIGINAL action's payload — re-tapping it before
+    the window passes just gets another honest 429, never a bypass."""
+    return InlineKeyboardMarkup([
+        [_action(copy.BTN_LIB_TRY_AGAIN, original_callback),
+         _button(copy.BTN_TASKS, "nav:tasks"),
          _button(copy.BTN_HOME, "nav:home")],
     ])
 
