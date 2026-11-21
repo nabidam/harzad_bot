@@ -162,6 +162,15 @@ Notes:
 - **Privacy (implemented):** per-`tg_id`; the whole view is private-chat
   only — a `📚 My music` tap in a group answers a toast and renders
   nothing. Every card callback re-checks the owner `tg_id` server-side.
+- **History backfill (implemented):** `scripts/backfill_music_library.py`
+  imports a user's past track URLs from the `logs` table (every pasted
+  message is logged). Metadata-only — the Bot API has no chat-history
+  endpoint, so old delivered messages' file_ids are unreachable and a
+  backfilled row's "Get again" re-downloads until a fresh delivery
+  captures cloud handles. `request_count`/`added_on`/`last_requested`
+  come from the log rows; `cruds.library.backfill_track` is
+  insert-if-absent, so live-captured rows are never touched. Idempotent;
+  `--dry-run` / `--limit` supported.
 
 ## 5. Chat UX (Phase A — implemented)
 
