@@ -12,8 +12,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))  # env_pins
 
 # Same env bootstrap as tests/conftest.py (no pytest here).
+import env_pins  # noqa: E402  (tests/ is importable via repo-root path below)
 from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
@@ -21,6 +23,7 @@ load_dotenv(ROOT / ".env.ci")
 os.environ.setdefault(
     "DB_URI", "postgresql+psycopg2://baaham:baaham_password@127.0.0.1:5432/harzad_db"
 )
+env_pins.apply(ROOT)
 
 import models.playlist
 import models.playlist_item

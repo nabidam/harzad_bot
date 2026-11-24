@@ -32,17 +32,9 @@ load_dotenv(PROJECT_ROOT / ".env.ci")
 # exist in ANY environment — the checkout for assets, tmp dirs for the
 # rest. A real .env on the dev box wins (it loads first, and neither
 # load_dotenv nor setdefault overrides set vars).
-os.environ.setdefault("SCRIPT_DIR", str(PROJECT_ROOT))
+import env_pins  # noqa: E402  (repo root is on sys.path above)
 
-_ci_root = Path(tempfile.mkdtemp(prefix="harzad_ci_"))
-(_ci_root / "downloads" / "mp3s").mkdir(parents=True)
-(_ci_root / "downloads" / "videos").mkdir(parents=True)
-os.environ.setdefault("DOWNLOAD_MP3_PATH", str(_ci_root / "downloads" / "mp3s"))
-os.environ.setdefault("DOWNLOAD_VIDEO_PATH", str(_ci_root / "downloads" / "videos"))
-os.environ.setdefault("HOST_ROOT", str(_ci_root / "downloads"))
-_cookie = _ci_root / "cookies.txt"
-_cookie.write_text("# Netscape HTTP Cookie File\n")
-os.environ.setdefault("YT_COOKIE_FILE", str(_cookie))
+env_pins.apply(PROJECT_ROOT)
 
 # Tests talk to the local Postgres the bot itself uses (`baaham-postgres`
 # container, 2026-10-27 — the old `harzad_test_pg:5437` test container is
