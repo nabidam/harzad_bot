@@ -12,6 +12,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # The suite runs live against Postgres (tests/conftest.py pins
     # DB_URI to 127.0.0.1:5432/harzad_db), matching the dev box layout.
     services:
@@ -43,6 +44,7 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       DEPLOY_HOST: 185.214.10.121
       DEPLOY_USER: navid
