@@ -16,7 +16,7 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from logging import getLogger
 
 import cruds.library as cruds
@@ -163,6 +163,32 @@ def record_request(tg_id: int, track_key: str) -> None:
     if db_circuit_open():
         return
     spawn_db_task(_record_request_sync, tg_id, track_key)
+
+
+def _record_file_ref_sync(tg_id: int, track_key: str, fields: dict,
+                          file_ref: tuple | None) -> None:
+    for db in get_db():
+        cruds.upsert_track(
+            db, tg_id=tg_id, track_key=track_key, file_ref=file_ref, **fields
+        )
+
+
+def record_file_ref(tg_id: int, track_key: str, fields: dict,
+                    file_ref: tuple | None) -> None:
+    """Refresh a row's cloud handles after a re-download re-send (the
+    Mini App ladder's step 3, plan §12.14).
+
+    Upserts with the row's CURRENT metadata plus the fresh
+    `(file_id, chat_id, message_id)`, so the request count and
+    `last_requested` advance exactly as on a fresh delivery — the next
+    re-send then takes the fast file_id path. `file_ref` is None in the
+    in-flight-timeout case (the upsert then preserves the old handles,
+    same contract as record_song_delivery). Soft-failing.
+    """
+    if db_circuit_open():
+        logger.debug("library handle refresh skipped: DB circuit open")
+        return
+    spawn_db_task(_record_file_ref_sync, tg_id, track_key, fields, file_ref)
 
 
 # --- reads (handler-side, soft-failing) ----------------------------------------
@@ -368,6 +394,100 @@ async def remove_track(tg_id: int, track_key: str) -> bool:
         return False
     db_record_success()
     return bool(result)
+
+
+# --- daily view (owner add-on 2026-11-24: the Mini App's "Daily" menu) ---------
+
+_MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def day_label(day: date) -> str:
+    """The Daily menu's row label: 'Today' / 'Yesterday' / 'Nov 18'
+    (+ ', 2025' when the year differs). Server-local dates throughout
+    (the stored timestamps are naive server-local)."""
+    today = datetime.now().date()
+    if day == today:
+        return "Today"
+    if day == today - timedelta(days=1):
+        return "Yesterday"
+    label = f"{_MONTH_ABBR[day.month - 1]} {day.day}"
+    if day.year != today.year:
+        label += f", {day.year}"
+    return label
+
+
+def _track_day(track: "LibraryTrack") -> date | None:
+    """The day the Daily view groups this row under: the local date of
+    the LAST request — a re-request moves the track to the newer day.
+    The library stores no per-request log (plan §12.14), so this is the
+    only day signal per track; `added_on` is the fallback."""
+    ts = track.last_requested or track.added_on
+    return ts.date() if ts is not None else None
+
+
+def daily_days_sync(tg_id: int) -> list[tuple[date, int]]:
+    """`[(day, count)]`, newest first — one row per day with at least
+    one requested track. Raises on DB failure (async wrapper -> None)."""
+    for db in get_db():
+        rows = [_to_track(r) for r in cruds.all_tracks(db, tg_id)]
+    counts: dict[date, int] = {}
+    for t in rows:
+        d = _track_day(t)
+        if d is not None:
+            counts[d] = counts.get(d, 0) + 1
+    return sorted(counts.items(), reverse=True)
+
+
+async def daily_days(tg_id: int):
+    """Worker-thread wrapper; None when the DB is open-circuited or the
+    call fails (the handler answers the unavailable state)."""
+    if db_circuit_open():
+        return None
+    try:
+        result = await asyncio.to_thread(daily_days_sync, tg_id)
+    except Exception:
+        logger.warning("music library daily read failed", exc_info=True)
+        db_record_failure()
+        return None
+    db_record_success()
+    return result
+
+
+def daily_page_sync(tg_id: int, day: date, page: int = 1,
+                    page_size: int = LIB_PAGE_SIZE):
+    """(tracks, total) for one day's tracks, newest request first —
+    the same order as the Latest view. `page` past the end falls back
+    to page 1, like library_page_sync."""
+    for db in get_db():
+        rows = [_to_track(r) for r in cruds.all_tracks(db, tg_id)]
+    rows = [t for t in rows if _track_day(t) == day]
+    rows.sort(key=lambda t: _norm(t.track_key))
+    rows.sort(key=lambda t: _ts(t.last_requested), reverse=True)
+    total = len(rows)
+    page = max(1, page)
+    if page_size and total and page > ((total + page_size - 1) // page_size):
+        page = 1
+    start = (page - 1) * page_size
+    return rows[start:start + page_size], total
+
+
+async def daily_page(tg_id: int, day: date, page: int = 1,
+                     page_size: int = LIB_PAGE_SIZE):
+    """Worker-thread wrapper; None when the DB is open-circuited or the
+    call fails (the handler answers the unavailable state)."""
+    if db_circuit_open():
+        return None
+    try:
+        result = await asyncio.to_thread(
+            daily_page_sync, tg_id, day, page, page_size)
+    except Exception:
+        logger.warning("music library daily page read failed",
+                       exc_info=True)
+        db_record_failure()
+        return None
+    db_record_success()
+    return result
 
 
 # --- card rendering helpers (UX v3, plan §12.2) ---------------------------------

@@ -16,21 +16,30 @@ GET).
 import asyncio
 import hashlib
 import hmac
+import io
 import json
+import math
 import os
 import time
 import uuid
+from datetime import date
 from logging import getLogger
 from pathlib import Path
 from urllib.parse import parse_qs
 
+import requests
 import validators
 from aiohttp import web
-from telegram.constants import ParseMode
+from PIL import Image
+from telegram.constants import ChatAction, ParseMode
 
+import utils.library as mlib
+import utils.resend as resend
 from configurations.settings import DOWNLOAD_VIDEO_PATH, MINIAPP_URL, TOKEN
+from connectors.preview import resolve_preview_url
 from utils.constants.messages import BOT_ID, MEDIA_CAPTION
 from utils.helpers import escape_html, prepare_cover
+from utils.storage import cleanup_media
 from utils.youtube_dl import YDL_OPTS
 
 logger = getLogger(__name__)
@@ -355,13 +364,450 @@ async def handle_chat(request: web.Request):
 
 
 # ---------------------------------------------------------------------------
+# music library (plan §7 / §12.14)
+# ---------------------------------------------------------------------------
+# The Mini App's visual library: the same facade reads as chat (one full
+# per-user read, Python-side filter/sort/page) plus the per-track actions
+# "Get again" (the plan §3 ladder, shared core utils.resend), the 30s
+# preview (in-app <audio>, no chat message) and remove. Auth is the
+# initData blob — MANDATORY here (unlike /api/jobs, which has a browser
+# preview mode): the library is personal data, so anonymous = 401.
+
+LIB_VIEWS = ("latest", "search", "often", "browse", "daily")
+LIB_SORTS = ("recent", "added", "az")
+LIB_DEFAULT_PAGE_SIZE = 30
+LIB_MAX_PAGE_SIZE = 100
+
+# Cover cache (plan §7): the remote cover_url is proxied + cached as a
+# <=480 px JPEG — the grid never hotlinks full-size CDN images, and a
+# dead CDN degrades to the letter tile in the SPA instead of a broken img.
+COVER_DIR = Path(__file__).resolve().parent.parent / "assets" / "covers"
+COVER_MAX_EDGE = 480
+COVER_MAX_BYTES = 190_000
+COVER_MAX_FILES = 500
+COVER_FETCH_TIMEOUT = 15.0
+
+
+async def _auth_required(request: web.Request) -> dict:
+    """initData is mandatory on the library routes; a missing or invalid
+    blob raises Unauthorized (401)."""
+    user = await _auth(request)
+    if user is None:
+        raise Unauthorized()
+    return user
+
+
+def _lib_unavailable():
+    """S1 for the app (the chat deck's LIB_UNAVAILABLE tone): a DB
+    failure must never look like the empty library (design §10.5)."""
+    return web.json_response(
+        {"error": "My music is temporarily unavailable. Try again shortly."},
+        status=503,
+    )
+
+
+def _iso_ts(dt) -> str | None:
+    """Naive server-local timestamp -> ISO with the server's UTC offset,
+    so the SPA parses the same instant on a device in any timezone."""
+    if dt is None:
+        return None
+    return dt.astimezone().isoformat()
+
+
+def _track_json(track) -> dict:
+    """One LibraryTrack as SPA JSON (plan §12.14). `has_cover` gates the
+    tile's img — the cover itself rides the authenticated proxy route."""
+    return {
+        "track_key": track.track_key,
+        "title": track.title,
+        "artist": track.artist,
+        "album": track.album,
+        "duration_sec": track.duration_sec,
+        "duration": mlib.duration_fmt(track.duration_sec),
+        "has_cover": bool(track.cover_url),
+        "spotify_url": track.spotify_url,
+        "request_count": track.request_count,
+        "added_on": _iso_ts(track.added_on),
+        "last_requested": _iso_ts(track.last_requested),
+    }
+
+
+async def handle_library(request: web.Request):
+    """GET /api/library?view=&sort=&q=&day=&page=&page_size= — one page
+    of one library view: latest / search / often / browse / daily.
+
+    `view=daily` always carries the day list (label + count, newest
+    first); with `day=YYYY-MM-DD` it also carries that day's tracks.
+    Owner isolation is intrinsic — the facade reads are per-user."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response(
+            {"error": "This app can only be opened from Telegram."}, status=401)
+    q = request.rel_url.query
+    view = q.get("view", "latest")
+    if view not in LIB_VIEWS:
+        return web.json_response({"error": "Unknown view."}, status=400)
+    sort = q.get("sort")
+    if view == "browse":
+        sort = sort or "recent"
+        if sort not in LIB_SORTS:
+            return web.json_response({"error": "Unknown sort."}, status=400)
+    else:
+        sort = None
+    try:
+        page = max(1, int(q.get("page", "1") or 1))
+        page_size = int(q.get("page_size", str(LIB_DEFAULT_PAGE_SIZE)))
+    except ValueError:
+        return web.json_response({"error": "Bad page."}, status=400)
+    page_size = min(max(page_size, 1), LIB_MAX_PAGE_SIZE)
+
+    tg_id = user["id"]
+    days_json = None
+    day_iso = None
+    query = ""
+
+    if view == "daily":
+        days = await mlib.daily_days(tg_id)
+        if days is None:
+            return _lib_unavailable()
+        days_json = [
+            {"day": d.isoformat(), "label": mlib.day_label(d), "count": c}
+            for d, c in days
+        ]
+        day_param = (q.get("day") or "").strip()
+        if day_param:
+            try:
+                day = date.fromisoformat(day_param)
+            except ValueError:
+                return web.json_response({"error": "Bad day."}, status=400)
+            data = await mlib.daily_page(tg_id, day, page, page_size)
+            if data is None:
+                return _lib_unavailable()
+            tracks, total = data
+            day_iso = day.isoformat()
+        else:  # the day list only — no track page yet
+            tracks, total = [], 0
+    elif view == "search":
+        # the RAW query rides the response (the chat snapshot's display
+        # contract, plan §12.13); matching normalizes internally
+        query = q.get("q") or ""
+        if len(mlib.normalize_query(query)) < mlib.LIB_SEARCH_MIN_CHARS:
+            return web.json_response(
+                {"error": "Please enter at least 2 characters."}, status=400)
+        rows = await mlib.search_library(tg_id, query)
+        if rows is None:
+            return _lib_unavailable()
+        # rows is the FULL matched set (the facade's frozen contract);
+        # the page slices from it, like the chat's search snapshot
+        total = len(rows)
+        pages = math.ceil(total / page_size) if total else 1
+        if page > pages:
+            page = 1  # the facade's out-of-range contract
+        start = (page - 1) * page_size
+        tracks = rows[start:start + page_size]
+    else:  # latest / often / browse — the facade pages (and clamps)
+        data = await mlib.library_page(
+            tg_id, view, sort=sort, page=page, page_size=page_size)
+        if data is None:
+            return _lib_unavailable()
+        tracks, total = data
+
+    pages = math.ceil(total / page_size) if total else 1
+    if page > pages:
+        page = 1  # echo the page the rows actually came from (the facade
+        # re-clamps out-of-range pages to 1 — the rows may have moved)
+    return web.json_response({
+        "view": view,
+        "sort": sort,
+        "query": query,
+        "day": day_iso,
+        "days": days_json,
+        "page": page,
+        "pages": pages,
+        "total": total,
+        "tracks": [_track_json(t) for t in tracks],
+    })
+
+
+def _cover_cache_path(tg_id: int, track_key: str, cover_url: str) -> Path:
+    digest = hashlib.sha1(
+        f"{tg_id}:{track_key}:{cover_url}".encode()).hexdigest()[:20]
+    return COVER_DIR / f"{digest}.jpg"
+
+
+def _fetch_cover_image(url: str) -> bytes | None:
+    """Fetch one remote cover, re-encode as a <=480 px JPEG (the
+    prepare_cover pipeline, plan §7). Sync — runs in a worker thread."""
+    try:
+        resp = requests.get(url, timeout=COVER_FETCH_TIMEOUT)
+        resp.raise_for_status()
+    except requests.RequestException:
+        logger.warning("cover fetch failed for %s", url[:80], exc_info=True)
+        return None
+    try:
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        img.thumbnail((COVER_MAX_EDGE, COVER_MAX_EDGE), Image.LANCZOS)
+        data = None
+        for quality in (85, 70, 55):
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+            data = buf.getvalue()
+            if len(data) <= COVER_MAX_BYTES:
+                break
+        return data
+    except Exception:
+        logger.warning("cover encode failed for %s", url[:80], exc_info=True)
+        return None
+
+
+def _evict_covers() -> None:
+    """Bound the cover cache: oldest-first deletion past COVER_MAX_FILES."""
+    try:
+        files = sorted(COVER_DIR.glob("*.jpg"),
+                       key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return
+    for path in files[:-COVER_MAX_FILES + 100]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+async def handle_library_cover(request: web.Request):
+    """GET /api/library/cover/<track_key>?initData=... — the tile's
+    cover, proxied + cached (plan §7). The fetched URL is the DB row's
+    OWN cover_url (fresh read) — never a client-supplied URL."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    track = await mlib.get_library_track(
+        user["id"], request.match_info["track_key"])
+    if track is None or not track.cover_url:
+        return web.json_response({"error": "Unknown track."}, status=404)
+    headers = {"Cache-Control": "private, max-age=3600"}
+    path = _cover_cache_path(user["id"], track.track_key, track.cover_url)
+    if path.is_file():
+        return web.FileResponse(path, headers=headers)
+    data = await asyncio.to_thread(_fetch_cover_image, track.cover_url)
+    if data is None:
+        return web.json_response(
+            {"error": "Cover image is unavailable right now."}, status=502)
+    try:
+        COVER_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    except OSError:
+        logger.warning("could not write the cover cache", exc_info=True)
+    else:
+        _evict_covers()
+    return web.Response(body=data, content_type="image/jpeg",
+                        headers=headers)
+
+
+# --- "Get again": the plan §3 ladder from the app (plan §12.14) --------------
+
+def _resend_key(tg_id: int, track_key: str) -> str:
+    return f"{tg_id}:{track_key}"
+
+
+def _prune_resends(resends: dict) -> None:
+    now = time.time()
+    for key in [k for k, s in resends.items()
+                if s["state"] in ("sent", "failed")
+                and now - s["created"] > 3600]:
+        resends.pop(key, None)
+
+
+async def _redownload_spotify(app: web.Application, tg_id: int, track,
+                              status: dict) -> None:
+    """The app's ladder step 3 (plan §12.14): re-download the Spotify
+    track (the SAME spotdl primitives the chat flow drives) and deliver
+    it to the owner's chat with send_audio, then refresh the row's cloud
+    handles + request count (the next re-send takes the fast file_id
+    path). `status` is the caller's in-memory entry — the SPA polls it
+    at .../resend/status. No chat status card and no tasks-registry
+    entry: the app owns the progress display for app-initiated work."""
+    from bot.handlers.music.spotify import download as spotify_download
+
+    bot = app["bot"]
+    path = None
+    try:
+        status["state"] = "resolving"
+        songs = await asyncio.to_thread(
+            spotify_download.search_term, app["spotdl"], track.spotify_url)
+        if not songs:
+            status.update(state="failed",
+                          error="That link no longer resolves to a track.")
+            return
+        status["state"] = "downloading"
+        result_song, path = await spotify_download.await_download_from_spotify(
+            app["spotdl"], songs[0])
+        if path is None:
+            status.update(state="failed",
+                          error="This download failed. Check the link or try again.")
+            return
+        status["state"] = "sending"
+        await bot.send_chat_action(chat_id=tg_id,
+                                   action=ChatAction.UPLOAD_VOICE)
+        with open(str(path), "rb") as f:
+            message = await bot.send_audio(
+                chat_id=tg_id,
+                audio=f,
+                thumbnail=getattr(result_song, "cover_url", None)
+                or track.cover_url,
+                title=track.title or None,
+                performer=track.artist or None,
+                duration=track.duration_sec or None,
+                protect_content=False,
+            )
+        file_ref = None
+        try:
+            audio = getattr(message, "audio", None)
+            file_id = getattr(audio, "file_id", None) if audio else None
+            message_id = getattr(message, "message_id", None)
+            if isinstance(file_id, str) and file_id and message_id is not None:
+                file_ref = (file_id, tg_id, message_id)
+        except Exception:
+            logger.debug("could not read file refs from the re-send "
+                         "response", exc_info=True)
+        status["state"] = "sent"
+        mlib.record_file_ref(
+            tg_id, track.track_key,
+            dict(title=track.title, artist=track.artist, album=track.album,
+                 duration_sec=track.duration_sec, cover_url=track.cover_url,
+                 spotify_url=track.spotify_url, source=track.source),
+            file_ref,
+        )
+    except Exception:
+        logger.exception("library re-download failed for %r",
+                         track.track_key)
+        status.update(state="failed",
+                      error="This download failed. Check the link or try again.")
+    finally:
+        # the staging file never outlives the send (plan 1.5 contract)
+        if path is not None:
+            cleanup_media(str(path))
+
+
+async def handle_library_resend(request: web.Request):
+    """POST /api/library/track/<track_key>/resend — "Get again": the
+    plan §3 ladder against a FRESH row (plan §7/§12.14). Steps 1-2 run
+    the shared core (file_id send, copyMessage); step 3 is this app's
+    background spotdl re-download (poll .../resend/status). The chat is
+    the delivery destination on every path."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    tg_id = user["id"]
+    track_key = request.match_info["track_key"]
+    track = await mlib.get_library_track(tg_id, track_key)
+    if track is None:
+        return web.json_response({"error": "Unknown track."}, status=404)
+
+    resends = request.app["resends"]
+    _prune_resends(resends)
+    key = _resend_key(tg_id, track_key)
+    existing = resends.get(key)
+    if existing is not None and existing["state"] in (
+            "resolving", "downloading", "sending"):
+        return web.json_response(
+            {"error": "Already working on this track."}, status=409)
+
+    result = await resend.redeliver(request.app["bot"], chat_id=tg_id,
+                                    track=track)
+    state = result["state"]
+    if state == resend.FLOOD:
+        return web.json_response(
+            {"error": (
+                "Telegram is limiting messages. "
+                f"Wait {result['retry_after']} seconds, then try again.")},
+            status=429)
+    if state in (resend.SENT_FILE_ID, resend.SENT_COPIED):
+        mlib.record_request(tg_id, track_key)
+        return web.json_response({"state": "sent", "via": state})
+    if state == resend.EXHAUSTED or request.app["spotdl"] is None:
+        # nothing left to try (no cloud copy, no link — or the spotdl
+        # engine is not up): the honest failure, never a silent skip
+        return web.json_response(
+            {"error": ("We couldn't retrieve this track. It may no longer "
+                       "be available from its source.")},
+            status=409)
+    entry = {"state": "resolving", "error": None, "created": time.time()}
+    resends[key] = entry
+    asyncio.get_running_loop().create_task(
+        _redownload_spotify(request.app, tg_id, track, entry))
+    return web.json_response({"state": "queued"})
+
+
+async def handle_library_resend_status(request: web.Request):
+    """GET /api/library/track/<track_key>/resend/status — the outcome of
+    a queued re-download for THIS owner+track (404: nothing in flight
+    and nothing finished within the prune window)."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    entry = request.app["resends"].get(
+        _resend_key(user["id"], request.match_info["track_key"]))
+    if entry is None:
+        return web.json_response(
+            {"error": "No re-send in progress."}, status=404)
+    return web.json_response({"state": entry["state"], "error": entry["error"]})
+
+
+async def handle_library_preview(request: web.Request):
+    """POST /api/library/track/<track_key>/preview — the 30s clip URL
+    (iTunes/Deezer, the same resolve as the chat's preview action) for
+    the SPA's in-app <audio> player (plan §12.14). No chat message: the
+    app plays it locally."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    track = await mlib.get_library_track(
+        user["id"], request.match_info["track_key"])
+    if track is None:
+        return web.json_response({"error": "Unknown track."}, status=404)
+    url = await resolve_preview_url(track.title, track.artist)
+    if not url:
+        return web.json_response(
+            {"error": "No 30s preview found for this track."}, status=404)
+    return web.json_response({"url": url})
+
+
+async def handle_library_remove(request: web.Request):
+    """POST /api/library/track/<track_key>/remove — delete one row. The
+    SPA carries the confirm (M05b's contract): previously delivered
+    messages are untouched."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    track_key = request.match_info["track_key"]
+    track = await mlib.get_library_track(user["id"], track_key)
+    if track is None:
+        return web.json_response(
+            {"error": "This track is no longer in your library."}, status=404)
+    ok = await mlib.remove_track(user["id"], track_key)
+    if not ok:
+        return web.json_response(
+            {"error": "That didn't work — please try again."}, status=503)
+    return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
 # server
 # ---------------------------------------------------------------------------
 
-def create_app(bot, base_url: str) -> web.Application:
+def create_app(bot, base_url: str, spotdl=None) -> web.Application:
     app = web.Application(client_max_size=2 ** 20)  # 1 MB request bodies
     app["bot"] = bot
     app["jobs"] = {}
+    app["resends"] = {}
+    app["spotdl"] = spotdl  # the app's ladder step 3 (None in tests)
     app["base_url"] = base_url
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/health", handle_health)
@@ -370,16 +816,27 @@ def create_app(bot, base_url: str) -> web.Application:
     app.router.add_get("/api/jobs/{job_id}", handle_job_status)
     app.router.add_get("/api/jobs/{job_id}/file", handle_job_file)
     app.router.add_post("/api/chat", handle_chat)
+    app.router.add_get("/api/library", handle_library)
+    app.router.add_get("/api/library/cover/{track_key}", handle_library_cover)
+    app.router.add_post("/api/library/track/{track_key}/resend",
+                        handle_library_resend)
+    app.router.add_get("/api/library/track/{track_key}/resend/status",
+                       handle_library_resend_status)
+    app.router.add_post("/api/library/track/{track_key}/preview",
+                        handle_library_preview)
+    app.router.add_post("/api/library/track/{track_key}/remove",
+                        handle_library_remove)
     return app
 
 
-async def start_server(bot, host: str, port: int, base_url: str) -> web.AppRunner:
+async def start_server(bot, host: str, port: int, base_url: str,
+                       spotdl=None) -> web.AppRunner:
     """Start the web server inside the running asyncio loop.
 
     Returns the AppRunner so the caller could close it later; the runner
     lives as long as the application does.
     """
-    app = create_app(bot, base_url)
+    app = create_app(bot, base_url, spotdl=spotdl)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

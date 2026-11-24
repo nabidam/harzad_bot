@@ -93,6 +93,8 @@ async def test_post_init_profile_copy_matches_spec(monkeypatch):
 async def test_menu_button_set_when_url_configured(monkeypatch):
     bot = make_bot()
     app = make_application(bot)
+    spotdl = object()
+    app.bot_data = {"spotdl_instance": spotdl}
     start = AsyncMock()
     monkeypatch.setattr(main, "start_server", start)
     monkeypatch.setattr(settings, "WEB_HOST", "127.0.0.1")
@@ -101,12 +103,30 @@ async def test_menu_button_set_when_url_configured(monkeypatch):
 
     await main.start_mini_app(app)
 
-    start.assert_awaited_once_with(bot, "127.0.0.1", 8377, "https://app.example/")
+    # the spotdl instance rides to the web server (the app's re-send
+    # ladder step 3, plan §12.14)
+    start.assert_awaited_once_with(bot, "127.0.0.1", 8377, "https://app.example/", spotdl)
     bot.set_chat_menu_button.assert_awaited_once()
     button = bot.set_chat_menu_button.await_args.kwargs["menu_button"]
     assert isinstance(button, MenuButtonWebApp)
     assert button.text == "Open Harzad"
     assert button.web_app.url == "https://app.example/"
+
+
+async def test_web_server_starts_without_spotdl(monkeypatch):
+    """No spotdl in bot_data (test harness / partial boot) -> None is
+    passed; the app's re-download step degrades to the honest failure."""
+    bot = make_bot()
+    app = make_application(bot)
+    app.bot_data = {}
+    start = AsyncMock()
+    monkeypatch.setattr(main, "start_server", start)
+    monkeypatch.setattr(settings, "MINIAPP_URL", "https://app.example/")
+
+    await main.start_mini_app(app)
+
+    start.assert_awaited_once()
+    assert start.await_args.args[4] is None
 
 
 async def test_menu_button_skipped_when_url_empty(monkeypatch):

@@ -34,15 +34,14 @@ failure card — never a silent skip.
 """
 import math
 import re
-from datetime import timedelta
 from logging import getLogger
 
 from telegram import Update
-from telegram.constants import ChatAction, ParseMode
-from telegram.error import RetryAfter, TelegramError
+from telegram.constants import ParseMode
+from telegram.error import TelegramError
 
 from connectors.preview import resolve_preview_url
-from utils import copy, keyboards, library
+from utils import copy, keyboards, library, resend
 from utils.ack import answer_callback
 from utils.constants.keyboards import (
     LIB_DETAIL_CALLBACK_PATTERN,
@@ -116,18 +115,6 @@ def _message_is_card(message) -> bool:
         if getattr(message, media, None):
             return False
     return True
-
-
-def _flood_wait_seconds(err) -> int:
-    """Human-sane seconds from a RetryAfter (Bot API 10: integer; PTB
-    is deprecating it toward timedelta — accept both)."""
-    value = getattr(err, "retry_after", None)
-    if isinstance(value, timedelta):
-        return max(1, int(value.total_seconds()))
-    try:
-        return max(1, int(value))
-    except (TypeError, ValueError):
-        return 5
 
 
 async def _show_text(update: Update, context: MyContext, text: str,
@@ -437,7 +424,7 @@ async def _origin_markup(context: MyContext, detail_entry: dict):
 
 # --- "Get again": the cloud re-send ladder (plan §3) ----------------------------
 
-async def _flood_card(update: Update, context: MyContext, err, cq) -> None:
+async def _flood_card(update: Update, context: MyContext, cq, seconds: int) -> None:
     """429 on a single re-send (plan §12.2): visible wait with the
     dynamic seconds; the wait card's Try again IS the tapped payload,
     so re-tapping early just gets another honest 429 — never a
@@ -445,7 +432,7 @@ async def _flood_card(update: Update, context: MyContext, err, cq) -> None:
     assert update.effective_chat is not None
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=copy.LIB_FLOOD_WAIT.format(seconds=_flood_wait_seconds(err)),
+        text=copy.LIB_FLOOD_WAIT.format(seconds=seconds),
         parse_mode=ParseMode.HTML,
         reply_markup=keyboards.library_flood_wait_keyboard(cq.data),
     )
@@ -453,13 +440,14 @@ async def _flood_card(update: Update, context: MyContext, err, cq) -> None:
 
 async def _redeliver(cq, update: Update, context: MyContext, markup,
                      track: LibraryTrack) -> None:
-    """Re-deliver one library track (the plan §3 ladder — semantics
-    unchanged; the track is always a FRESH row read, plan §12.4).
+    """Re-deliver one library track (the plan §3 ladder — the shared
+    core `utils.resend.redeliver` runs steps 1-2; this surface owns
+    step 3 and the terminal states). The track is always a FRESH row
+    read (plan §12.4).
 
     1. sendAudio by file_id — the documented cloud re-send: Telegram
        relays the stored file server-side, no upload from our server,
-       no 50 MB limit. The audio keeps its baked-in title/artist/cover;
-       no thumbnail parameter (thumbnails can't be re-sent).
+       no 50 MB limit.
     2. copyMessage of the original delivery — only when step 1 failed
        and the original message refs are known.
     3. Full re-download via the Spotify URL (the existing task flow) —
@@ -471,56 +459,18 @@ async def _redeliver(cq, update: Update, context: MyContext, markup,
     chat_id = update.effective_chat.id
     tg_id = update.effective_user.id
 
-    if track.file_id:
-        try:
-            await context.bot.send_chat_action(
-                chat_id=chat_id, action=ChatAction.UPLOAD_VOICE
-            )
-            await context.bot.send_audio(
-                chat_id=chat_id,
-                audio=track.file_id,
-                title=track.title or None,
-                performer=track.artist or None,
-                duration=track.duration_sec or None,
-                reply_markup=markup,
-                protect_content=False,
-            )
-        except RetryAfter as err:
-            await _flood_card(update, context, err, cq)
-            return
-        except TelegramError:
-            logger.warning(
-                "library re-send by file_id failed for %r; "
-                "trying copyMessage", track.track_key, exc_info=True,
-            )
-        else:
-            library.record_request(tg_id, track.track_key)
-            return
+    result = await resend.redeliver(
+        context.bot, chat_id=chat_id, track=track, markup=markup
+    )
+    state = result["state"]
 
-    if track.orig_chat_id is not None and track.orig_message_id is not None:
-        try:
-            await context.bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=track.orig_chat_id,
-                message_id=track.orig_message_id,
-                reply_markup=markup,
-                protect_content=False,
-            )
-        except RetryAfter as err:
-            await _flood_card(update, context, err, cq)
-            return
-        except TelegramError:
-            # the original message is gone (deleted chat, purged) — the
-            # re-download is the only honest left
-            logger.warning(
-                "library copyMessage failed for %r; "
-                "falling back to re-download", track.track_key, exc_info=True,
-            )
-        else:
-            library.record_request(tg_id, track.track_key)
-            return
-
-    if track.spotify_url:
+    if state == resend.FLOOD:
+        await _flood_card(update, context, cq, result["retry_after"])
+        return
+    if state in (resend.SENT_FILE_ID, resend.SENT_COPIED):
+        library.record_request(tg_id, track.track_key)
+        return
+    if state == resend.REDOWNLOAD:
         # the existing flow: its own status message, cancel, retry and
         # (on success) the delivery capture that refreshes this row's
         # file_id / message refs for next time

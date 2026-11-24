@@ -125,6 +125,7 @@ async def start_mini_app(application: Application) -> None:
             settings.WEB_HOST,
             settings.WEB_PORT,
             settings.MINIAPP_URL,
+            application.bot_data.get("spotdl_instance"),
         )
     except Exception:
         logger.warning("Could not start the Mini App web server", exc_info=True)

@@ -325,9 +325,9 @@ pattern and `nav:library` — conversation and group 1 alike.
 | Phase | Deliverable | Est. |
 |---|---|---|
 | **A** | Schema + models/cruds, `track_id` on TrackResult, delivery capture, `My music` v1 card + v2 menu/list, log backfill | **done 2026-11-21** (tag `music-library-phase-a` marks pre-rework state) |
-| **A.2** | **UX v3 rework per `docs/music-library-ux-design.md` — §12 tasks A1–A6** (menu, shared list, detail, search, often/sort, reconciliation) | in progress 2026-11-21 |
+| **A.2** | **UX v3 rework per `docs/music-library-ux-design.md` — §12 tasks A1–A6** (menu, shared list, detail, search, often/sort, reconciliation) | **done 2026-11-24** (commit `85264db`; live gate in use, merge pending) |
 | **B** | Playlists: create/rename/delete, add/remove item, Send-all batch task (design §8, plan §12.7) | 1–2 days |
-| **C** | Mini App Music tab (grid, search, player, playlists) | 3–5 days |
+| **C** | Mini App Music tab — **v1 done 2026-11-24 (§12.14)**: browse grid + **Daily** (owner add-on) + search + per-track actions; the in-app player stays P2 | player: 1–2 days |
 | Deferred | Manual tags, usage stats, lyrics, in-chat reordering UI | revisit on demand |
 
 Branch → live gate → confirm → merge, per the repo workflow (KB §12).
@@ -903,3 +903,86 @@ refinements the implementation forced:
 - Captions take the result **total** (not the page) for the
   `Found N tracks.` line, and the search caption drops the sentence
   period when the page suffix joins it.
+
+### 12.14 Phase C v1 as-built (Mini App Music tab + Daily, 2026-11-24)
+
+Owner add-on (2026-11-24): "based on this design, add music library to
+the mini app. I'd like to have an extra menu named 'daily' that returns
+tracks per day requested." The owner pulled Phase C ahead of Phase B
+(playlists) — the app library lands on top of the unmerged v3 branch so
+one live bot covers both gates.
+
+**Decisions (recommended defaults, stated for the live gate to object
+to):**
+- **Daily** groups by the local date of **`last_requested`** — a
+  re-request moves the track to the newer day; the library stores no
+  per-request log, so `added_on` is only the fallback. (Alternatives
+  offered 2026-11-24: `added_on`, or a per-request log — rejected,
+  no demand yet.)
+- **Audio v1** = in-app **30s preview** (iTunes/Deezer clip through
+  `<audio>`, no chat message) + **Get again** delivers the full track
+  to the **chat**. No continuous in-app player in v1 (§7 P2 stays).
+
+**Backend:**
+- Facade additions (`utils/library.py`): `daily_days` / `daily_page`
+  (one full per-user read, Python-side grouping — the §12.5 pattern) +
+  `day_label` (Today / Yesterday / "Nov 18" [", 2025"]) +
+  `record_file_ref` (refreshes the row's cloud handles after a
+  re-download re-send: upsert with the row's CURRENT metadata + the
+  fresh `(file_id, chat_id, message_id)`; count and `last_requested`
+  advance exactly as on a fresh delivery).
+- **Shared ladder core** (`utils/resend.py`, new): ladder steps 1–2
+  (§3: sendAudio by file_id → copyMessage) + outcome routing
+  (`file_id` / `copied` / `flood` / `redownload` / `exhausted`). The
+  chat handler's `_redeliver` became a thin adapter over it (step 3 =
+  the existing Spotify task flow; the flood card and exhausted card
+  stay chat-side); the app runs step 3 as its own background task.
+- Web API (`web/app.py`) — initData is MANDATORY on every library
+  route (personal data: anonymous 401, unlike `/api/jobs`):
+  | Route | Purpose |
+  |---|---|
+  | `GET /api/library?view=latest\|search\|often\|browse\|daily&sort=&q=&day=&page=&page_size=` | one page of one view; `daily` always carries the day list (label + count, newest first) and with `day=YYYY-MM-DD` that day's tracks; the RAW query is echoed (the §12.13 snapshot contract) |
+  | `GET /api/library/cover/<track_key>` | cover proxy: the DB row's OWN `cover_url` (never client-supplied), ≤480 px JPEG cached in `assets/covers/` (500-file cap, oldest evicted) |
+  | `POST /api/library/track/<key>/resend` | the §3 ladder on a fresh row → `sent` / `queued` / 429 flood (with seconds) / 409 exhausted |
+  | `GET /api/library/track/<key>/resend/status` | the in-memory re-download state (SPA polls) |
+  | `POST /api/library/track/<key>/preview` | the 30s clip URL (same resolve as the chat preview) |
+  | `POST /api/library/track/<key>/remove` | delete the row (the SPA carries the confirm) |
+  DB failure = **503 unavailable** (never looks like the empty library,
+  §10.5); out-of-range pages clamp to 1 (the facade contract); owner
+  isolation is intrinsic — the facade reads are per-user, and a foreign
+  `track_key` is a plain 404.
+- **Re-download core** (`_redownload_spotify`): spotdl `search_term` +
+  `await_download_from_spotify` (the SAME primitives the chat flow
+  drives; the instance is wired from `bot_data` in `main.py`),
+  `send_audio` chat delivery (no status card, no tasks-registry entry —
+  the app owns the progress display), then `record_file_ref` + staging
+  cleanup. In-memory resend entries prune after 1 h; a second resend of
+  an in-flight track is 409.
+- Timestamps cross the API as ISO **with the server's UTC offset**
+  (naive server-local → aware), so a device in any timezone parses the
+  same instant.
+
+**SPA (`web/static/index.html`):** third nav tab "My music" (appended —
+least disruptive to existing users); view chips Latest / Daily / Search
+/ Often / Browse (+ Browse sort chips: Recently requested / Recently
+added / Title A–Z); a 3-column cover grid (covers through the
+authenticated proxy, letter-tile fallback); Daily renders the day list
+(Today / Yesterday / … + counts) → the day's grid + "◀ All days"; a
+track sheet with **Get again** (polls the resend status while
+re-downloading), **30s preview** (floating player bar), **Open on
+Spotify**, **Remove** (in-sheet confirm, M05b's contract); states
+S0 / S1 / search-empty / search-too-short / often-empty aligned to the
+chat deck; browser mode shows a sign-in note (no anonymous library).
+
+**Tests:** `tests/test_29_miniapp_music.py` (44 tests: auth matrix,
+view/sort/search/paging/daily matrix, resend ladder incl. the row-handle
+refresh through `record_file_ref`, the re-download core, preview,
+remove, cover proxy cache, SPA copy pinned to the deck) + `test_13`
+wiring assertions (the spotdl instance rides to the web server). Full
+suite: **536 passed**.
+
+**Deviations from §7 (P2 estimates):** the cover cache is a simple
+mtime-evicted folder, not an LRU store; no in-app full player (P2 stays);
+the web re-download deliberately skips the chat tasks registry; the
+**Daily menu is App-only** — the chat menu stays frozen at 4
+destinations until Phase B.
