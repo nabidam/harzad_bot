@@ -10,12 +10,39 @@ import hmac
 import json
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 # --- env pins (must happen before app imports) ---------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# The suite needs the app's full env-var set. On a dev box the real .env
+# provides it; on CI (no .env) the committed .env.ci dummies fill the gap.
+# load_dotenv() never overrides vars that are already set, so loading the
+# real .env first keeps dev behavior identical on both files.
+from dotenv import load_dotenv
+
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / ".env.ci")
+
+# A few tests assert environment invariants (assets under SCRIPT_DIR, an
+# existing cookie file, existing download roots). Pin them to paths that
+# exist in ANY environment — the checkout for assets, tmp dirs for the
+# rest. A real .env on the dev box wins (it loads first, and neither
+# load_dotenv nor setdefault overrides set vars).
+os.environ.setdefault("SCRIPT_DIR", str(PROJECT_ROOT))
+
+_ci_root = Path(tempfile.mkdtemp(prefix="harzad_ci_"))
+(_ci_root / "downloads" / "mp3s").mkdir(parents=True)
+(_ci_root / "downloads" / "videos").mkdir(parents=True)
+os.environ.setdefault("DOWNLOAD_MP3_PATH", str(_ci_root / "downloads" / "mp3s"))
+os.environ.setdefault("DOWNLOAD_VIDEO_PATH", str(_ci_root / "downloads" / "videos"))
+os.environ.setdefault("HOST_ROOT", str(_ci_root / "downloads"))
+_cookie = _ci_root / "cookies.txt"
+_cookie.write_text("# Netscape HTTP Cookie File\n")
+os.environ.setdefault("YT_COOKIE_FILE", str(_cookie))
 
 # Tests talk to the local Postgres the bot itself uses (`baaham-postgres`
 # container, 2026-10-27 — the old `harzad_test_pg:5437` test container is

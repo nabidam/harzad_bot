@@ -12,6 +12,22 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The suite runs live against Postgres (tests/conftest.py pins
+    # DB_URI to 127.0.0.1:5432/harzad_db), matching the dev box layout.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: baaham
+          POSTGRES_PASSWORD: baaham_password
+          POSTGRES_DB: harzad_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U baaham -d harzad_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -19,6 +35,8 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: uv sync --frozen
+      - name: Create test schema
+        run: uv run python scripts/ci_schema.py
       - name: Run tests (live-marked tests excluded by default)
         run: uv run pytest -q
 

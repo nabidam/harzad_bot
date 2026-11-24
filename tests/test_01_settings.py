@@ -35,7 +35,7 @@ def _scratch() -> Path:
     """Copy configurations/settings.py into a scratch package (no .env up-tree)."""
     global SCRATCH
     if SCRATCH is None or not SCRATCH.exists():
-        SCRATCH = Path(tempfile.mkdtemp(prefix="settest_", dir="/tmp/opencode"))
+        SCRATCH = Path(tempfile.mkdtemp(prefix="settest_"))
         pkg = SCRATCH / "configurations"
         pkg.mkdir()
         (pkg / "__init__.py").write_text("")
@@ -120,6 +120,10 @@ def test_no_env_no_dotenv_fails():
     assert "KeyError: 'TOKEN'" in r.stderr
 
 
+@pytest.mark.skipif(
+    not (PROJ / ".env").exists(),
+    reason="verifies the project .env wiring; CI has no .env (uses .env.ci)",
+)
 def test_project_import_uses_dotenv():
     # In-repo import (the normal path): .env supplies the values.
     code = (
