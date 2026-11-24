@@ -1,0 +1,17 @@
+[Unit]
+Description=Harzad Telegram bot
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=navid
+WorkingDirectory=/home/navid/projects/harzad_bot
+Environment=HOME=/home/navid
+# --no-sync: scripts/deploy.sh owns the venv (uv sync --frozen --no-dev);
+# the service must not re-sync on every start.
+ExecStart=/home/navid/.local/bin/uv run --frozen --no-dev --no-sync python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

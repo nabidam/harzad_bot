@@ -21,11 +21,13 @@ git fetch origin "$BRANCH"
 git checkout -f "$BRANCH"
 git reset --hard "origin/$BRANCH"
 
+# --no-dev everywhere (sync, alembic, systemd unit) so the venv state is
+# identical on every deploy and every service start — no re-sync churn.
 echo ">> Syncing dependencies (uv)"
-uv sync --frozen
+uv sync --frozen --no-dev
 
 echo ">> Applying DB migrations (alembic)"
-uv run alembic upgrade head
+uv run --frozen --no-dev alembic upgrade head
 
 echo ">> Restarting $SERVICE"
 sudo -H systemctl restart "$SERVICE"

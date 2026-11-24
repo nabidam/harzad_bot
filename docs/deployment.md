@@ -22,15 +22,18 @@ VPS — AI chat tasks fail gracefully until it is pointed at a real OpenAI-compa
 ## One-time setup (already done on 2026-11-24)
 
 1. `uv` installed for `navid` (`~/.local/bin/uv`).
-2. Postgres container:
+2. Postgres container (volume mounts at `/var/lib/postgresql`, the PG18 layout —
+   mounting at `.../data` crash-loops):
    `docker run -d --name harzad-pg --restart unless-stopped -e POSTGRES_USER=baaham \
-   -e POSTGRES_PASSWORD=... -e POSTGRES_DB=harzad_db -v harzad_pg_data:/var/lib/postgresql/data \
+   -e POSTGRES_PASSWORD=... -e POSTGRES_DB=harzad_db -v harzad_pg_data:/var/lib/postgresql \
    -p 127.0.0.1:5432:5432 postgres:18`
 3. Initial data migrated from the dev box via `pg_dump -Fc` → `pg_restore`.
 4. `/etc/sudoers.d/harzad-bot`: `navid` may `systemctl restart harzad-bot` / `is-active`
    (passwordless, nothing else).
-5. `/etc/systemd/system/harzad-bot.service` (enabled; `Restart=always`):
-   `ExecStart=/home/navid/.local/bin/uv run --frozen --no-dev python main.py`
+5. Systemd unit — install `deploy/systemd/harzad-bot.service` to
+   `/etc/systemd/system/harzad-bot.service`, then `systemctl daemon-reload && systemctl enable harzad-bot`.
+   `Restart=always`; `ExecStart` uses `--no-sync` (the venv is owned by
+   `scripts/deploy.sh`'s `uv sync --frozen --no-dev`; the service must not re-sync on start).
 6. nginx vhost: `deploy/nginx/harzad.navidam.ir.conf` → `/etc/nginx/sites-available/` +
    symlink in `sites-enabled`, `nginx -t && systemctl reload nginx`.
 7. SSH: repo deploy key `gh-actions-nl` (read-only) → `navid`'s `authorized_keys`;
