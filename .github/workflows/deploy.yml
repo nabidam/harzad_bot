@@ -1,0 +1,48 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Never let two deploys race on the same box.
+concurrency:
+  group: deploy-nl
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run tests (live-marked tests excluded by default)
+        run: uv run pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: 185.214.10.121
+      DEPLOY_USER: navid
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deploy key and host key
+        env:
+          NL_DEPLOY_KEY: ${{ secrets.NL_DEPLOY_KEY }}
+          NL_HOST_KEY: ${{ secrets.NL_HOST_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          umask 077
+          printf '%s\n' "$NL_DEPLOY_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$NL_HOST_KEY" > ~/.ssh/known_hosts
+      - name: Deploy to nl
+        run: |
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "DEPLOY_BRANCH=${GITHUB_REF_NAME} bash ${DEPLOY_USER_HOME}/projects/harzad_bot/scripts/deploy.sh"
+        env:
+          DEPLOY_USER_HOME: /home/navid
