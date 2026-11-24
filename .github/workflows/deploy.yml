@@ -32,8 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
+        # interpreter pinned by .python-version (3.12.16) — same on dev box, CI, VPS
       - name: Install dependencies
         run: uv sync --frozen
       - name: Create test schema
