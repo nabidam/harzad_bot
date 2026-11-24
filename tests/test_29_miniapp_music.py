@@ -22,6 +22,7 @@ Every request signs in as the SAME tg_id the rows are seeded under:
 the facade reads are per-user, so a mismatched initData is exactly the
 "empty library" the owner-isolation tests rely on.
 """
+import re
 import time
 import uuid
 from datetime import date, datetime, timedelta
@@ -802,3 +803,29 @@ def test_miniapp_music_copy_matches_deck():
         "Open the app from Telegram to see your library.",
     ):
         assert s in html, f"missing Mini App music copy: {s!r}"
+
+
+def test_miniapp_music_sends_init_data():
+    """The SPA must attach initData to EVERY library call.
+
+    Regression (prod, 2026-11-24): musicUrl() and the track action calls
+    omitted initData, so every /api/library request 401'd and the catch-all
+    error branch rendered the misleading "temporarily unavailable" card.
+    The server accepts initData from the query string (GETs) and the JSON
+    body (POSTs) — the SPA must use one of the two on each call."""
+    html = (Path(__file__).resolve().parent.parent / "web" / "static"
+            / "index.html").read_text(encoding="utf-8")
+    m = re.search(r"function musicUrl\(page\)\{.*?\n\}", html, re.S)
+    assert m, "musicUrl() missing from the SPA"
+    assert "initData" in m.group(0), "musicUrl() must carry initData"
+    m = re.search(r"function pollResend\(key\)\{.*?\n\}", html, re.S)
+    assert m, "pollResend() missing from the SPA"
+    assert "initData" in m.group(0), "resend/status GET must carry initData"
+    for call in (
+        '"/api/library/track/" + key + "/resend",\n      { initData',
+        '"/api/library/track/" + key + "/preview",\n      { initData',
+        '"/api/library/track/" + key + "/remove",\n      { initData',
+    ):
+        assert call in html, f"track action call missing initData: {call!r}"
+    assert 'showMusicState("no-auth")' in html, \
+        "401s must render the no-auth state, not 'temporarily unavailable'"

@@ -601,6 +601,9 @@ function showMusicState(kind, extra){
     big = "⚠"; t = "My music is temporarily unavailable.";
     desc = "Your library data could not be loaded. Please try again shortly.";
     retry = true;
+  } else if (kind === "no-auth") {
+    big = "🔒"; t = "Open the app from Telegram to see your library.";
+    desc = "Your music is private — the library only loads inside Telegram.";
   } else if (kind === "day-empty") {
     big = "🗓"; t = "No tracks on this day.";
     desc = "This day's list is empty.";
@@ -624,6 +627,10 @@ function musicUrl(page){
   if (music.view === "browse") p.set("sort", music.sort);
   if (music.view === "search") p.set("q", music.query);
   if (music.view === "daily" && music.day) p.set("day", music.day);
+  // initData is mandatory on every library call (owner-isolated data);
+  // without it the endpoint 401s and the SPA renders the misleading
+  // "temporarily unavailable" card (prod incident, 2026-11-24).
+  if (inTG) p.set("initData", tg.initData);
   return "/api/library?" + p.toString();
 }
 
@@ -725,6 +732,10 @@ async function loadMusic(reset){
       hideMusicState();
     } else if (/temporarily unavailable/.test(e.message || "")) {
       showMusicState("unavailable");
+    } else if (/Telegram|Unauthorized/.test(e.message || "")) {
+      // 401: no/invalid initData — not a transient DB state; "try again"
+      // would never help.
+      showMusicState("no-auth");
     } else {
       showMusicState("unavailable");
     }
@@ -844,7 +855,8 @@ $("sheet-resend").addEventListener("click", async () => {
   setSheetBusy(true);
   setSheetStatus("Sending to your chat…");
   try {
-    const r = await api("/api/library/track/" + key + "/resend", {});
+    const r = await api("/api/library/track/" + key + "/resend",
+      { initData: inTG ? tg.initData : "" });
     if (r.state === "sent") {
       setSheetStatus("Sent to your chat ✅", "done");
       haptic("success");
@@ -875,7 +887,9 @@ function pollResend(key){
   };
   resendPoll = setInterval(async () => {
     try {
-      const s = await api("/api/library/track/" + key + "/resend/status");
+      let statusUrl = "/api/library/track/" + key + "/resend/status";
+      if (inTG) statusUrl += "?initData=" + encodeURIComponent(tg.initData);
+      const s = await api(statusUrl);
       if (s.state === "sent") {
         clearInterval(resendPoll);
         setSheetStatus("Sent to your chat ✅", "done");
@@ -896,7 +910,8 @@ $("sheet-preview").addEventListener("click", async () => {
   const key = encodeURIComponent(sheetTrack.track_key);
   setSheetStatus("Loading preview…");
   try {
-    const r = await api("/api/library/track/" + key + "/preview", {});
+    const r = await api("/api/library/track/" + key + "/preview",
+      { initData: inTG ? tg.initData : "" });
     playPreview(r.url, sheetTrack.title);
   } catch (e) {
     setSheetStatus(e.message, "error");
@@ -930,7 +945,8 @@ $("sheet-rm-yes").addEventListener("click", async () => {
   const key = encodeURIComponent(sheetTrack.track_key);
   $("sheet-rm-yes").disabled = true;
   try {
-    await api("/api/library/track/" + key + "/remove", {});
+    await api("/api/library/track/" + key + "/remove",
+      { initData: inTG ? tg.initData : "" });
     toast("Track removed from My music.");
     closeSheet();
     loadMusic();
