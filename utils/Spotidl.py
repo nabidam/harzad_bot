@@ -69,9 +69,12 @@ class Spotidl:
         """
 
         if downloader_settings is None:
+            # --proxy only when set: hosts with direct egress run YT_PROXY
+            # empty, and a bare "--proxy" makes yt-dlp's optparse crash.
+            proxy_arg = f" --proxy {YT_PROXY}" if YT_PROXY else ""
             downloader_settings = {
                 "simple_tui": True,
-                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --force-ipv4 --proxy {YT_PROXY}",
+                "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --force-ipv4{proxy_arg}",
                 # "yt_dlp_args": f"--proxy http://127.0.0.1:10808",
                 "output": DOWNLOAD_MP3_PATH,
                 #"lyrics_providers": ["genius", "musixmatch"]

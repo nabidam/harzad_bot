@@ -346,9 +346,12 @@ if __name__ == "__main__":
     #             )
     # SpotifyClient.init(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
     
+    # --proxy only when set: direct-egress hosts run YT_PROXY empty, and a
+    # bare "--proxy" crashes yt-dlp's optparse at spotdl init.
+    proxy_arg = f" --proxy {YT_PROXY}" if YT_PROXY else ""
     downloader_settings = {
         "simple_tui": True,
-        "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --impersonate chrome --force-ipv4 --proxy {YT_PROXY}",
+        "yt_dlp_args": f"--cookies {YT_COOKIE_FILE} --ignore-errors --impersonate chrome --force-ipv4{proxy_arg}",
         "output": DOWNLOAD_MP3_PATH,
         #"lyrics_providers": ["genius", "musixmatch"],
         "parallel_downloads": 1
