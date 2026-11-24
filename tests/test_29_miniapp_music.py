@@ -24,7 +24,7 @@ the facade reads are per-user, so a mismatched initData is exactly the
 """
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -103,6 +103,17 @@ def seed_track(tg_id: int, key: str, *, title="Title", artist="Artist",
     return row
 
 
+def day_at(day: date, hour: int) -> datetime:
+    """A fixed wall-clock instant on `day`.
+
+    Day-grouping tests must not seed `now - timedelta(...)`: when the
+    suite runs shortly after local midnight those offsets land on the
+    PREVIOUS day and "today" assertions break (00:00-03:00 flake).
+    Explicit in-day times are stable at any hour — a "today" row a few
+    hours in the future is fine, grouping only reads the date."""
+    return datetime(day.year, day.month, day.day, hour, 0)
+
+
 def track_count(tg_id: int, key: str) -> int:
     db = SessionLocal()
     try:
@@ -135,44 +146,43 @@ async def client(web_app):
 # --- facade: daily (owner add-on) ------------------------------------------------
 
 def test_daily_days_orders_and_counts(test_tg):
-    now = datetime.now()
-    seed_track(test_tg, "t1", last=now - timedelta(minutes=5))
-    seed_track(test_tg, "t2", last=now - timedelta(hours=3))
-    seed_track(test_tg, "t3", last=now - timedelta(days=1, hours=2))
-    seed_track(test_tg, "t4", last=now - timedelta(days=5))
+    today = datetime.now().date()
+    seed_track(test_tg, "t1", last=day_at(today, 10))
+    seed_track(test_tg, "t2", last=day_at(today, 12))
+    seed_track(test_tg, "t3", last=day_at(today - timedelta(days=1), 12))
+    seed_track(test_tg, "t4", last=day_at(today - timedelta(days=5), 12))
     days = mlib.daily_days_sync(test_tg)
     assert [d for d, _c in days] == [
-        now.date(),
-        (now - timedelta(days=1)).date(),
-        (now - timedelta(days=5)).date(),
+        today,
+        today - timedelta(days=1),
+        today - timedelta(days=5),
     ]
     assert [c for _d, c in days] == [2, 1, 1]
 
 
 def test_daily_page_orders_newest_first_and_clamps(test_tg):
-    day = datetime.now().date()
-    now = datetime.now()
-    seed_track(test_tg, "a", last=now - timedelta(minutes=30))
-    seed_track(test_tg, "b", last=now - timedelta(minutes=10))
-    seed_track(test_tg, "c", last=now - timedelta(minutes=1))
-    tracks, total = mlib.daily_page_sync(test_tg, day, page=1, page_size=2)
+    today = datetime.now().date()
+    seed_track(test_tg, "a", last=day_at(today, 9))
+    seed_track(test_tg, "b", last=day_at(today, 10))
+    seed_track(test_tg, "c", last=day_at(today, 11))
+    tracks, total = mlib.daily_page_sync(test_tg, today, page=1, page_size=2)
     assert total == 3
     assert [t.track_key for t in tracks] == ["c", "b"]
     # a page past the end falls back to page 1 (the rows may have moved)
-    tracks, _ = mlib.daily_page_sync(test_tg, day, page=9, page_size=2)
+    tracks, _ = mlib.daily_page_sync(test_tg, today, page=9, page_size=2)
     assert [t.track_key for t in tracks] == ["c", "b"]
 
 
 def test_daily_uses_last_requested_not_added_on(test_tg):
     """A re-request moves the track to the NEWER day (plan §12.14:
     last_requested is the day signal; no per-request log exists)."""
-    now = datetime.now()
-    old_day = now - timedelta(days=4)
+    today = datetime.now().date()
+    old_day = today - timedelta(days=4)
     seed_track(test_tg, "moved",
-               added=old_day.replace(hour=9, minute=0),
-               last=now - timedelta(minutes=2))
+               added=day_at(old_day, 9),
+               last=day_at(today, 10))
     days = mlib.daily_days_sync(test_tg)
-    assert [d for d, _c in days] == [now.date()]
+    assert [d for d, _c in days] == [today]
 
 
 def test_day_label_today_yesterday_month_year():
@@ -386,10 +396,10 @@ async def test_library_bad_params_400(client, test_tg):
 async def test_library_daily_day_list_and_day_page(client, test_tg):
     c, _, _ = client
     ini = init_for(test_tg)
-    now = datetime.now()
-    seed_track(test_tg, "today1", last=now - timedelta(minutes=10))
-    seed_track(test_tg, "today2", last=now - timedelta(hours=2))
-    seed_track(test_tg, "yest", last=now - timedelta(days=1, hours=3))
+    today = datetime.now().date()
+    seed_track(test_tg, "today1", last=day_at(today, 14))
+    seed_track(test_tg, "today2", last=day_at(today, 10))
+    seed_track(test_tg, "yest", last=day_at(today - timedelta(days=1), 12))
 
     r = await c.get("/api/library", params={"initData": ini, "view": "daily"})
     assert r.status == 200
