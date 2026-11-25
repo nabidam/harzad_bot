@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Track } from "../api/types";
 import { COPY } from "../copy";
 import { Cover } from "./cover";
@@ -18,7 +18,7 @@ function Tile({
 }: {
   track: Track;
   index: number;
-  onOpen: (t: Track) => void;
+  onOpen: (t: Track, index: number) => void;
 }) {
   return (
     <div
@@ -26,7 +26,7 @@ function Tile({
       style={{ "--i": Math.min(index, 12) } as CSSProperties}
       onClick={() => {
         import("../theme").then((t) => t.haptic("light"));
-        onOpen(track);
+        onOpen(track, index);
       }}
     >
       <div className="coverwrap">
@@ -39,9 +39,311 @@ function Tile({
   );
 }
 
+/** The tag filter row (v2 §5.3): A→Z chips with link counts, tap to
+ * filter, × to delete (two-tap arm), + for inline create. */
+function TagRow({ m }: { m: import("../music").MusicApi }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [armed, setArmed] = useState<number | null>(null);
+  const armedTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (armedTimer.current) window.clearTimeout(armedTimer.current);
+    };
+  }, []);
+
+  const arm = (id: number) => {
+    setArmed(id);
+    if (armedTimer.current) window.clearTimeout(armedTimer.current);
+    armedTimer.current = window.setTimeout(() => setArmed(null), 2600);
+  };
+
+  return (
+    <div
+      className="chips tagrow"
+      id="tag-chips"
+      role="group"
+      aria-label={COPY.tagsLabel}
+    >
+      {m.tags.map((t) => (
+        <span
+          key={t.id}
+          className={"tagchip" + (m.activeTag === t.name ? " active" : "")}
+          data-tag={t.name}
+        >
+          <button
+            type="button"
+            className="tagchip-f"
+            aria-pressed={m.activeTag === t.name}
+            onClick={() => m.onTagFilter(t.name)}
+          >
+            {t.name}
+            <span className="tagcount num">{t.count}</span>
+          </button>
+          <button
+            type="button"
+            className={"tagchip-x" + (armed === t.id ? " arm" : "")}
+            aria-label={COPY.deleteTagQ(t.name)}
+            onClick={() => {
+              if (armed === t.id) {
+                setArmed(null);
+                void m.onTagDelete(t.id, t.name);
+              } else {
+                arm(t.id);
+              }
+            }}
+          >
+            <Icon name="x" />
+          </button>
+        </span>
+      ))}
+      {adding ? (
+        <form
+          className="tagadd"
+          id="tag-add-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const n = name.trim();
+            if (!n) return;
+            setAdding(false);
+            setName("");
+            void m.onTagAdd(n);
+          }}
+        >
+          <input
+            autoFocus
+            type="text"
+            value={name}
+            placeholder={COPY.tagPlaceholder}
+            maxLength={40}
+            autoComplete="off"
+            aria-label={COPY.tagAdd}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setAdding(false);
+                setName("");
+              }
+            }}
+          />
+          <button type="submit" className="go" aria-label={COPY.tagAdd}>
+            <span>
+              <Icon name="plus" />
+            </span>
+          </button>
+        </form>
+      ) : (
+        <button
+          type="button"
+          className="chip"
+          id="tag-add"
+          onClick={() => setAdding(true)}
+        >
+          {COPY.tagAdd}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The Playlists view (v2 §5.3): the list, then the open playlist's
+ * paged grid. Add/remove from the track sheet; no drag-reorder (spec). */
+function PlaylistsView({ m }: { m: import("../music").MusicApi }) {
+  const [createName, setCreateName] = useState("");
+  const [renameName, setRenameName] = useState("");
+
+  const pl = m.plOpen;
+
+  if (pl) {
+    const first = m.plTracks[0];
+    return (
+      <div id="playlist-detail">
+        <button
+          className="chip back"
+          id="pl-back"
+          onClick={m.onPlBack}
+        >
+          <Icon name="chevron-left" />{" "}
+          {COPY.playlistsView}
+        </button>
+        <div className="plhead">
+          <div className="plhead-cover">
+            {first ? <Cover track={first} /> : <Icon name="list" />}
+          </div>
+          <div className="plhead-body">
+            {m.plRenameOpen ? (
+              <form
+                className="plrename"
+                id="pl-rename-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const n = renameName.trim();
+                  if (!n) return;
+                  setRenameName("");
+                  void m.onPlRename(n);
+                }}
+              >
+                <input
+                  autoFocus
+                  type="text"
+                  value={renameName}
+                  placeholder={COPY.namePlaceholder}
+                  maxLength={120}
+                  aria-label={COPY.renamePlaylist}
+                  onChange={(e) => setRenameName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") m.onPlCloseRename();
+                  }}
+                />
+                <button type="submit" className="btn primary">
+                  {COPY.renamePlaylist}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={m.onPlCloseRename}
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <div className="plhead-name" id="pl-name">
+                {pl.name}
+              </div>
+            )}
+            {!m.plRenameOpen && (
+              <div className="minirow plhead-actions">
+                <button
+                  className="btn ghost"
+                  id="pl-rename"
+                  onClick={() => {
+                    setRenameName(pl.name);
+                    m.onPlOpenRename();
+                  }}
+                >
+                  {COPY.renamePlaylist}
+                </button>
+                <button
+                  className="btn ghost danger"
+                  id="pl-delete"
+                  onClick={m.onPlDeleteClick}
+                >
+                  <Icon name="trash" /> {COPY.deletePlaylist}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {m.plDelConfirm && (
+          <div className="confirmrow" id="pl-confirm">
+            <span>{COPY.deletePlaylistQ(pl.name)}</span>
+            <div className="minirow">
+              <button
+                className="btn danger-solid"
+                id="pl-delete-yes"
+                onClick={() => void m.onPlDeleteYes()}
+              >
+                Yes
+              </button>
+              <button
+                className="btn ghost"
+                id="pl-delete-keep"
+                onClick={m.onPlDeleteKeep}
+              >
+                Keep
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // the list
+  return (
+    <div id="playlist-list">
+      <>
+        {m.plCreateOpen ? (
+            <form
+              className="plcreate"
+              id="pl-create-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const n = createName.trim();
+                if (!n) return;
+                setCreateName("");
+                void m.onPlCreate(n);
+              }}
+            >
+              <input
+                autoFocus
+                type="text"
+                value={createName}
+                placeholder={COPY.namePlaceholder}
+                maxLength={120}
+                aria-label={COPY.newPlaylist}
+                onChange={(e) => setCreateName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") m.onPlCloseCreate();
+                }}
+              />
+              <button type="submit" className="btn primary">
+                Create
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={m.onPlCloseCreate}
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <button
+              className="btn primary"
+              id="pl-new"
+              onClick={m.onPlOpenCreate}
+            >
+              <Icon name="plus" /> {COPY.newPlaylist}
+            </button>
+          )}
+          {m.plList.length > 0 && !m.plCreateOpen && (
+            <div className="pllist">
+              {m.plList.map((p) => (
+                <button
+                  className="dayrow plrow"
+                  type="button"
+                  key={p.id}
+                  data-pl={p.id}
+                  onClick={() => m.onOpenPlaylist(p.id)}
+                >
+                  <span className="dico">
+                    <Icon name="list" />
+                  </span>
+                  <div>
+                    <div className="dl">{p.name}</div>
+                    <div className="ds num">
+                      {p.count} {p.count === 1 ? "track" : "tracks"}
+                    </div>
+                  </div>
+                  <span className="chev">
+                    <Icon name="chevron-right" />
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+    </div>
+  );
+}
+
 /** v1 #tab-download sibling: the music section (v1 markup 1:1). */
 export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
   const chip = (on: boolean) => "chip" + (on ? " active" : "");
+  const plView = m.view === "playlists";
   return (
     <>
       <div className="music-head">
@@ -57,6 +359,7 @@ export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
             <button className={chip(m.view === "search")} aria-pressed={m.view === "search"} data-view="search">Search</button>
             <button className={chip(m.view === "often")} aria-pressed={m.view === "often"} data-view="often">Often</button>
             <button className={chip(m.view === "browse")} aria-pressed={m.view === "browse"} data-view="browse">Browse</button>
+            <button className={chip(plView)} aria-pressed={plView} data-view="playlists">{COPY.playlistsView}</button>
           </div>
           <div className="chips" id="music-sorts" role="group" aria-label="Browse order" hidden={m.view !== "browse"}>
             <button className={chip(m.sort === "recent")} aria-pressed={m.sort === "recent"} data-sort="recent">Recently requested</button>
@@ -93,6 +396,9 @@ export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
               </span>
             </button>
           </form>
+          {m.tags.length > 0 && !plView && (
+            <TagRow m={m} />
+          )}
         </div>
       )}
 
@@ -123,26 +429,67 @@ export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
         ))}
       </div>
 
-      <div id="track-grid" className="grid" key={m.gridNonce}>
-        {m.skeleton
-          ? Array.from({ length: 6 }, (_, i) => (
-              <div className="skel" key={i}>
-                <div className="sk coverwrap"></div>
-                <div className="sk sk-l1"></div>
-                <div className="sk sk-l2"></div>
-              </div>
-            ))
-          : m.tracks.map((t, i) => (
-              <Tile key={t.track_key} track={t} index={i} onOpen={m.onOpenTile} />
-            ))}
-      </div>
+      {plView && <PlaylistsView m={m} />}
 
-      <button className="btn ghost" id="load-more" hidden={!m.loadMoreVisible} onClick={m.onLoadMore}>
-        <Icon name="download" />{" " + COPY.loadMore}
-      </button>
+      {plView && !m.plOpen && m.plStateBox && (
+        <StateBox kind={m.plStateBox.kind} extra={m.plStateBox.extra} onRetry={m.onPlRetry} />
+      )}
 
-      {m.stateBox && (
-        <StateBox kind={m.stateBox.kind} extra={m.stateBox.extra} onRetry={m.onRetry} />
+      {!plView && (
+        <>
+          <div id="track-grid" className="grid" key={m.gridNonce}>
+            {m.skeleton
+              ? Array.from({ length: 6 }, (_, i) => (
+                  <div className="skel" key={i}>
+                    <div className="sk coverwrap"></div>
+                    <div className="sk sk-l1"></div>
+                    <div className="sk sk-l2"></div>
+                  </div>
+                ))
+              : m.tracks.map((t, i) => (
+                  <Tile key={t.track_key} track={t} index={i} onOpen={m.onOpenTile} />
+                ))}
+          </div>
+
+          <button className="btn ghost" id="load-more" hidden={!m.loadMoreVisible} onClick={m.onLoadMore}>
+            <Icon name="download" />{" " + COPY.loadMore}
+          </button>
+
+          {m.stateBox && (
+            <StateBox kind={m.stateBox.kind} extra={m.stateBox.extra} onRetry={m.onRetry} />
+          )}
+        </>
+      )}
+
+      {plView && m.plOpen && (
+        <>
+          <div id="track-grid" className="grid" key={"pl" + m.gridNonce}>
+            {m.plSkeleton
+              ? Array.from({ length: 6 }, (_, i) => (
+                  <div className="skel" key={i}>
+                    <div className="sk coverwrap"></div>
+                    <div className="sk sk-l1"></div>
+                    <div className="sk sk-l2"></div>
+                  </div>
+                ))
+              : m.plTracks.map((t, i) => (
+                  <Tile key={t.track_key} track={t} index={i} onOpen={m.onOpenTile} />
+                ))}
+          </div>
+
+          <button
+            className="btn ghost"
+            id="pl-load-more"
+            hidden={!m.plLoadMoreVisible}
+            onClick={m.onPlLoadMore}
+          >
+            <Icon name="download" />{" " + COPY.loadMore}
+          </button>
+
+          {m.plStateBox && (
+            <StateBox kind={m.plStateBox.kind} extra={m.plStateBox.extra} onRetry={m.onPlRetry} />
+          )}
+        </>
       )}
     </>
   );

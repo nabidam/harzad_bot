@@ -1,8 +1,9 @@
 // The ONLY fetch site in the app (v2 spec §5). Every API call goes through
 // api(); initData is injected here and nowhere else — the 2026-11-24 401
 // regression (library calls sent without initData) is structurally
-// impossible. GETs carry initData in the query string, POSTs in the JSON
-// body, exactly as web/app.py's _auth() accepts.
+// impossible. GETs carry initData in the query string, everything else
+// (POST/PATCH/DELETE) in the JSON body — exactly as web/app.py's _auth()
+// accepts (it tries the body first, then the query).
 import { activeInitData } from "../theme";
 
 export class ApiError extends Error {
@@ -12,6 +13,8 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
+
+export type ApiMethod = "POST" | "PATCH" | "DELETE";
 
 /** Append initData to a GET url (covers, library pages, resend status). */
 export function withInit(url: string): string {
@@ -23,16 +26,22 @@ export function withInit(url: string): string {
 export async function api<T = unknown>(
   path: string,
   body?: Record<string, unknown>,
+  method: ApiMethod = "POST",
 ): Promise<T> {
-  const isPost = body !== undefined;
   const init = activeInitData();
-  const res = await fetch(path, {
-    method: isPost ? "POST" : "GET",
-    headers: isPost ? { "Content-Type": "application/json" } : {},
-    body: isPost
-      ? JSON.stringify({ ...body, initData: init ?? "" })
-      : undefined,
-  });
+  const isGet = body === undefined;
+  const res = await fetch(
+    // GETs: the caller applied withInit() to the path (pinned contract,
+    // see client.test.ts) — never applied twice here.
+    path,
+    isGet
+      ? { method: "GET" }
+      : {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, initData: init ?? "" }),
+        },
+  );
   let data: { error?: string } = {};
   try {
     data = (await res.json()) as { error?: string };

@@ -1,7 +1,9 @@
 """Create all model tables on the CI test database (idempotent).
 
 The user/log tables have alembic migrations; the music-library tables
-(tracks/playlists/playlist_items) do not yet, so create_all from the
+(tracks/playlists/playlist_items/tags/track_tags) get theirs in
+migrations/versions/b3e5f7a9c1d2 (guarded create — a fresh
+`alembic upgrade head` builds the same schema), so create_all from the
 models is the single source of truth for the test schema.
 
 Run from the repo root (the workflow does this):  uv run python scripts/ci_schema.py
@@ -28,7 +30,9 @@ env_pins.apply(ROOT)
 import models.playlist
 import models.playlist_item
 import models.log
+import models.tag
 import models.track
+import models.track_tag
 import models.user  # noqa: F401  (imported for table registration)
 
 from connectors.db import Base, engine

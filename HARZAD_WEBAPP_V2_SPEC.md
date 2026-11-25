@@ -63,6 +63,25 @@ Notes:
   honors `Range`, (b) Telegram webview audio behavior — background playback
   policy, media keys, `MediaSession` support. 1 day.
 
+Spike outcome (2026-11-25, live API, bot token):
+- (a) VERIFIED twice: a fresh bot-sent file (document AND audio) answers
+  `200 + Accept-Ranges: bytes`, and `Range: bytes=A-B` answers
+  `206 + Content-Range: bytes A-B/N` with the exact slice — the Range
+  proxy design holds. Content-Type from upstream is
+  `application/octet-stream` → the proxy maps it by file extension.
+- ANOMALY, characterized: 5 older library `file_id`s (0–3 days old)
+  return `getFile` 200 but their file URL 404s consistently (nginx,
+  `{"ok":false,"error_code":404}`). Fresh sends of the same type work,
+  so this is Telegram-side file purging with stale metadata, not a
+  token/age/type rule the app can influence. Contract impact: none —
+  the stream endpoint already answers the same `404 {"error":
+  "no-source"}` for a purged file, and the UI path is preview + the
+  re-send ladder, which restores a fresh `file_id`.
+- (b) webview audio: server-side nothing more to prove; background
+  policy / media keys need the real device check on first device
+  install (a `MediaSession` smoke test in the shipped player covers
+  desktop Chrome).
+
 ## 4. Backend changes
 
 ### 4.1 Schema (alembic migration, all user-scoped)
@@ -96,6 +115,7 @@ playlist/tag links).
 | POST | `/api/library/tags` | `{name}` create |
 | DELETE | `/api/library/tags/{id}` | Delete tag + links |
 | POST | `/api/library/track/{key}/tags` | `{names: []}` set/merge tag links |
+| DELETE | `/api/library/track/{key}/tags/{name}` | Unlink one tag (case-insensitive, idempotent) — the sheet's chip × (added during Phase 1 UI: the merge endpoint alone cannot un-assign) |
 | GET | `/api/library?tag={name}` | Filter existing library views by tag |
 
 ### 4.3 Download job options

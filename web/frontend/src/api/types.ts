@@ -17,6 +17,7 @@ export interface Job {
   file_url?: string;
   file_id?: string | null;
   file_size_mb?: number;
+  options?: { target?: string } | null; // echoed from the request (v2 §4.3)
   error?: string;
 }
 
@@ -34,6 +35,8 @@ export interface Track {
   duration?: string | null; // "3:42"
   duration_sec?: number | null;
   has_cover: boolean;
+  has_stream: boolean; // the row still carries a Telegram file_id (v2 §5.2)
+  tags?: string[]; // the track's tag names, A->Z (v2 §4.2)
   spotify_url?: string | null;
   source?: string;
   request_count: number;
@@ -56,6 +59,20 @@ export interface LibraryPage {
 export interface ResendResult {
   state: "sent" | "queued" | string;
   via?: string;
+}
+
+export interface Tag {
+  id: number;
+  name: string;
+  count: number; // linked tracks
+}
+
+export interface Playlist {
+  id: number;
+  name: string;
+  count: number;
+  created_on?: string | null;
+  updated_on?: string | null;
 }
 
 export interface ResendStatus {

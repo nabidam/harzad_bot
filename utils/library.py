@@ -276,13 +276,16 @@ def _sort_tracks(rows: list[LibraryTrack], source: str,
 
 def library_page_sync(tg_id: int, source: str = "latest", sort: str | None = None,
                       query: str | None = None, page: int = 1,
-                      page_size: int = LIB_PAGE_SIZE):
+                      page_size: int = LIB_PAGE_SIZE,
+                      tag_keys: set | None = None):
     """(tracks, total) for one page of one source view (plan §12.5).
 
     One full user read on the calling thread; filter/sort/paginate in
     Python. Raises on DB failure — the async wrapper turns that into
     None. `page` past the end falls back to page 1 (rows may have been
-    removed since the card rendered).
+    removed since the card rendered). `tag_keys` (WebApp v2 §4.2
+    `?tag=`) restricts the view to the tagged rows BEFORE sorting and
+    paging — an empty set yields the empty page.
     """
     if source not in SOURCES:
         raise ValueError(f"unknown library source: {source!r}")
@@ -293,6 +296,8 @@ def library_page_sync(tg_id: int, source: str = "latest", sort: str | None = Non
         query = _norm(query)
     for db in get_db():
         rows = [_to_track(r) for r in cruds.all_tracks(db, tg_id)]
+    if tag_keys is not None:
+        rows = [t for t in rows if t.track_key in tag_keys]
     rows = _sort_tracks(rows, source, sort, query)
     total = len(rows)
     if page_size and total and page > ((total + page_size - 1) // page_size):
@@ -303,14 +308,16 @@ def library_page_sync(tg_id: int, source: str = "latest", sort: str | None = Non
 
 async def library_page(tg_id: int, source: str = "latest", sort: str | None = None,
                        query: str | None = None, page: int = 1,
-                       page_size: int = LIB_PAGE_SIZE):
+                       page_size: int = LIB_PAGE_SIZE,
+                       tag_keys: set | None = None):
     """Read on a worker thread; None when the DB is open-circuited or
     the call fails (the handler renders the unavailable card)."""
     if db_circuit_open():
         return None
     try:
         result = await asyncio.to_thread(
-            library_page_sync, tg_id, source, sort, query, page, page_size)
+            library_page_sync, tg_id, source, sort, query, page, page_size,
+            tag_keys)
     except Exception:
         logger.warning("music library read failed", exc_info=True)
         db_record_failure()
@@ -396,6 +403,266 @@ async def remove_track(tg_id: int, track_key: str) -> bool:
     return bool(result)
 
 
+# --- playlists + tags (WebApp v2 §4.1/§4.2) ----------------------------------
+# Same contract as the reads above: worker thread, None = DB failure
+# (the handler answers the honest "temporarily unavailable"), False/
+# "duplicate" = a specific answerable outcome.
+
+async def _run_sync_thread(fn, *args):
+    if db_circuit_open():
+        return None
+    try:
+        result = await asyncio.to_thread(fn, *args)
+    except Exception:
+        logger.warning("music library write failed", exc_info=True)
+        db_record_failure()
+        return None
+    db_record_success()
+    return result
+
+
+def playlist_list_sync(tg_id: int) -> list[dict]:
+    rows = []
+    for db in get_db():
+        for playlist, count in cruds.list_playlists_with_counts(db, tg_id):
+            rows.append({
+                "id": playlist.id,
+                "name": playlist.name,
+                "count": count,
+                "created_on": playlist.created_on.isoformat()
+                if playlist.created_on else None,
+                "updated_on": playlist.updated_on.isoformat()
+                if playlist.updated_on else None,
+            })
+    return rows
+
+
+async def playlist_list(tg_id: int) -> list[dict] | None:
+    return await _run_sync_thread(playlist_list_sync, tg_id)
+
+
+def playlist_create_sync(tg_id: int, name: str) -> dict | str:
+    for db in get_db():
+        playlist = cruds.create_playlist(db, tg_id, name)
+        if playlist is None:
+            return "duplicate"
+        return {"id": playlist.id, "name": playlist.name, "count": 0,
+                "created_on": playlist.created_on.isoformat()
+                if playlist.created_on else None}
+
+
+async def playlist_create(tg_id: int, name: str):
+    """dict (the new playlist) | "duplicate" | None (DB failure)."""
+    return await _run_sync_thread(playlist_create_sync, tg_id, name)
+
+
+def playlist_rename_sync(tg_id: int, playlist_id: int, name: str):
+    for db in get_db():
+        playlist = cruds.get_playlist(db, tg_id, playlist_id)
+        if playlist is None:
+            return "missing"
+        if not cruds.rename_playlist(db, tg_id, playlist_id, name):
+            return "duplicate"
+        return {"id": playlist.id, "name": name,
+                "count": cruds.playlist_track_count(db, playlist.id)}
+
+
+async def playlist_rename(tg_id: int, playlist_id: int, name: str):
+    """dict (renamed) | "missing" | "duplicate" | None (DB failure)."""
+    return await _run_sync_thread(playlist_rename_sync, tg_id, playlist_id, name)
+
+
+def playlist_delete_sync(tg_id: int, playlist_id: int) -> bool:
+    for db in get_db():
+        return cruds.delete_playlist(db, tg_id, playlist_id)
+
+
+async def playlist_delete(tg_id: int, playlist_id: int) -> bool:
+    """True when a playlist went; False for unknown id or DB failure —
+    the handler answers 404 either way (the two are indistinguishable
+    by design: no hint about what exists)."""
+    return await _run_sync_thread(playlist_delete_sync, tg_id, playlist_id)
+
+
+def playlist_tracks_page_sync(tg_id: int, playlist_id: int, page: int,
+                              page_size: int):
+    for db in get_db():
+        if cruds.get_playlist(db, tg_id, playlist_id) is None:
+            return "missing"
+        rows = [track for _, track in
+                cruds.playlist_tracks(db, tg_id, playlist_id)]
+    page = max(1, page)
+    total = len(rows)
+    if page_size and total and page > ((total + page_size - 1) // page_size):
+        page = 1
+    start = (page - 1) * page_size
+    return rows[start:start + page_size], total
+
+
+async def playlist_tracks_page(tg_id: int, playlist_id: int, page: int,
+                               page_size: int):
+    """(tracks, total) in playback order | "missing" | None (DB
+    failure)."""
+    return await _run_sync_thread(
+        playlist_tracks_page_sync, tg_id, playlist_id, page, page_size)
+
+
+def playlist_add_tracks_sync(tg_id: int, playlist_id: int,
+                             track_keys: list[str]) -> tuple[int, int] | str:
+    for db in get_db():
+        if cruds.get_playlist(db, tg_id, playlist_id) is None:
+            return "missing"
+        return cruds.add_playlist_tracks(db, tg_id, playlist_id, track_keys)
+
+
+async def playlist_add_tracks(tg_id: int, playlist_id: int,
+                              track_keys: list[str]):
+    """(added, unknown) | "missing" | None (DB failure)."""
+    return await _run_sync_thread(
+        playlist_add_tracks_sync, tg_id, playlist_id, track_keys)
+
+
+def playlist_remove_track_sync(tg_id: int, playlist_id: int,
+                               track_key: str) -> bool:
+    for db in get_db():
+        return cruds.remove_playlist_item_by_key(
+            db, tg_id, playlist_id, track_key)
+
+
+async def playlist_remove_track(tg_id: int, playlist_id: int,
+                                track_key: str) -> bool:
+    """True when a membership went; False for unknown playlist/track or
+    DB failure (404 either way)."""
+    return await _run_sync_thread(
+        playlist_remove_track_sync, tg_id, playlist_id, track_key)
+
+
+# --- tags ---------------------------------------------------------------------
+
+TAG_NAME_MAX = 80
+
+
+def clean_tag_names(names) -> list[str] | None:
+    """Trim/dedup (case-insensitively) the client's names; [] when
+    nothing usable, None when the input was not a list of strings."""
+    if not isinstance(names, list):
+        return None
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in names:
+        if not isinstance(name, str):
+            return None
+        name = name.strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen or len(name) > TAG_NAME_MAX:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out
+
+
+def tag_list_sync(tg_id: int) -> list[dict]:
+    rows = []
+    for db in get_db():
+        for tag, count in cruds.list_tags_with_counts(db, tg_id):
+            rows.append({"id": tag.id, "name": tag.name, "count": count})
+    return rows
+
+
+async def tag_list(tg_id: int) -> list[dict] | None:
+    return await _run_sync_thread(tag_list_sync, tg_id)
+
+
+def tag_create_sync(tg_id: int, name: str) -> dict | str:
+    for db in get_db():
+        tag = cruds.find_tag(db, tg_id, name)
+        if tag is not None:
+            return {"id": tag.id, "name": tag.name, "count": 0, "exists": True}
+        tag = cruds.create_tag(db, tg_id, name)
+        if tag is None:
+            tag = cruds.find_tag(db, tg_id, name)
+        return {"id": tag.id, "name": tag.name, "count": 0}
+
+
+async def tag_create(tg_id: int, name: str) -> dict | None:
+    """dict (the tag) | None (DB failure)."""
+    return await _run_sync_thread(tag_create_sync, tg_id, name)
+
+
+def tag_delete_sync(tg_id: int, tag_id: int) -> bool:
+    for db in get_db():
+        return cruds.delete_tag(db, tg_id, tag_id)
+
+
+async def tag_delete(tg_id: int, tag_id: int) -> bool:
+    """True when a tag went; False for unknown id or DB failure (404
+    either way)."""
+    return await _run_sync_thread(tag_delete_sync, tg_id, tag_id)
+
+
+def track_tags_sync(tg_id: int, track_key: str) -> list[str]:
+    for db in get_db():
+        return cruds.track_tag_names(db, tg_id, track_key)
+
+
+async def track_tags(tg_id: int, track_key: str) -> list[str] | None:
+    return await _run_sync_thread(track_tags_sync, tg_id, track_key)
+
+
+def track_tags_map_sync(tg_id: int, track_keys: list[str]) -> dict:
+    for db in get_db():
+        return cruds.track_tags_map(db, tg_id, track_keys)
+    return {}
+
+
+async def track_tags_map(tg_id: int, track_keys: list[str]) -> dict:
+    """track_key -> name-ordered tag names, one query (v2 §4.2); {} on
+    DB failure (the pages still render, just without chip rows)."""
+    return await _run_sync_thread(track_tags_map_sync, tg_id, track_keys)
+
+
+def track_set_tags_sync(tg_id: int, track_key: str, names: list[str]) -> list[str] | str:
+    for db in get_db():
+        if cruds.get_track(db, tg_id, track_key) is None:
+            return "missing"
+        return cruds.set_track_tags(db, tg_id, track_key, names)
+
+
+async def track_set_tags(tg_id: int, track_key: str, names: list[str]):
+    """the resulting tag-name list | "missing" | None (DB failure)."""
+    return await _run_sync_thread(track_set_tags_sync, tg_id, track_key, names)
+
+
+def track_remove_tag_sync(
+    tg_id: int, track_key: str, name: str
+) -> list[str] | str | None:
+    for db in get_db():
+        if cruds.get_track(db, tg_id, track_key) is None:
+            return "missing"
+        cruds.remove_track_tag(db, tg_id, track_key, name)
+        return cruds.track_tag_names(db, tg_id, track_key)
+    return None
+
+
+async def track_remove_tag(tg_id: int, track_key: str, name: str):
+    """the resulting tag-name list | "missing" | None (DB failure)."""
+    return await _run_sync_thread(
+        track_remove_tag_sync, tg_id, track_key, name)
+
+
+def tagged_track_keys_sync(tg_id: int, tag_name: str) -> set[str]:
+    for db in get_db():
+        return cruds.tagged_track_keys(db, tg_id, tag_name)
+
+
+async def tagged_track_keys(tg_id: int, tag_name: str) -> set[str] | None:
+    """The track_keys carrying the tag (case-insensitive); None on DB
+    failure (503), an empty set when nothing matches."""
+    return await _run_sync_thread(tagged_track_keys_sync, tg_id, tag_name)
+
+
 # --- daily view (owner add-on 2026-11-24: the Mini App's "Daily" menu) ---------
 
 _MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -455,13 +722,16 @@ async def daily_days(tg_id: int):
 
 
 def daily_page_sync(tg_id: int, day: date, page: int = 1,
-                    page_size: int = LIB_PAGE_SIZE):
+                    page_size: int = LIB_PAGE_SIZE,
+                    tag_keys: set | None = None):
     """(tracks, total) for one day's tracks, newest request first —
     the same order as the Latest view. `page` past the end falls back
-    to page 1, like library_page_sync."""
+    to page 1, like library_page_sync. `tag_keys` filters as there."""
     for db in get_db():
         rows = [_to_track(r) for r in cruds.all_tracks(db, tg_id)]
     rows = [t for t in rows if _track_day(t) == day]
+    if tag_keys is not None:
+        rows = [t for t in rows if t.track_key in tag_keys]
     rows.sort(key=lambda t: _norm(t.track_key))
     rows.sort(key=lambda t: _ts(t.last_requested), reverse=True)
     total = len(rows)
@@ -473,14 +743,15 @@ def daily_page_sync(tg_id: int, day: date, page: int = 1,
 
 
 async def daily_page(tg_id: int, day: date, page: int = 1,
-                     page_size: int = LIB_PAGE_SIZE):
+                     page_size: int = LIB_PAGE_SIZE,
+                     tag_keys: set | None = None):
     """Worker-thread wrapper; None when the DB is open-circuited or the
     call fails (the handler answers the unavailable state)."""
     if db_circuit_open():
         return None
     try:
         result = await asyncio.to_thread(
-            daily_page_sync, tg_id, day, page, page_size)
+            daily_page_sync, tg_id, day, page, page_size, tag_keys)
     except Exception:
         logger.warning("music library daily page read failed",
                        exc_info=True)

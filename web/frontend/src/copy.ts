@@ -70,6 +70,56 @@ export const COPY = {
   statLastRequested: "Last requested",
   statAdded: "Added",
   once: "once",
+
+  // -- player (v2 §5.2) ----------------------------------------------------------
+  play: "Play",
+  playerFullTrack: "Full track",
+  streamDegraded: "30s preview · full source unavailable",
+  streamUnavailableHint:
+    'Full playback unavailable — "Get again" restores it from your chat.',
+  shuffle: "Shuffle",
+  repeatOff: "Repeat off",
+  repeatAll: "Repeat all",
+  repeatOne: "Repeat one",
+
+  // -- download options (v2 §4.3) --------------------------------------------
+  dlQuality: "Quality",
+  targetVideo1080: "1080p",
+  targetVideo720: "720p",
+  targetVideo480: "480p",
+  targetVideo360: "360p",
+  targetAudio: "Audio",
+  targetDefault: "Default",
+
+  // -- tags & playlists (v2 §5.3) ---------------------------------------------
+  playlistsView: "Playlists",
+  playlistsEmpty: "No playlists yet.",
+  playlistsEmptyDesc: "Create a playlist to group your tracks.",
+  playlistEmpty: "Nothing in this playlist yet.",
+  playlistEmptyDesc: 'Open any track and use "Add to playlist".',
+  newPlaylist: "New playlist",
+  namePlaceholder: "Name…",
+  renamePlaylist: "Rename",
+  deletePlaylist: "Delete",
+  addToPlaylist: "Add to playlist",
+  addedToPlaylist: (name: string) => "Added to " + name + ".",
+  alreadyInPlaylist: "Already in this playlist.",
+  playlistCreated: "Playlist created.",
+  playlistRenamed: "Playlist renamed.",
+  playlistDeleted: "Playlist deleted.",
+  deletePlaylistQ: (name: string) =>
+    'Delete "' + name + '"? Your tracks stay in your library.',
+  tagsLabel: "Tags",
+  tagAdd: "New tag",
+  tagPlaceholder: "Tag name…",
+  tagAdded: "Tag added.",
+  tagUnlinked: "Tag removed.",
+  tagCreated: "Tag created.",
+  tagExists: "Tag already exists.",
+  tagDeleted: "Tag deleted.",
+  noTags: "No tags yet.",
+  deleteTagQ: (name: string) =>
+    'Delete tag "' + name + '"? It is removed from every track.',
 };
 
 /** Job states, the bot's status vocabulary (spec §12.2). */

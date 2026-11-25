@@ -172,8 +172,88 @@ async def test_status_shape(client):
     r = await c.get(f"/api/jobs/{job_id}")
     body = await r.json()
     assert set(body) == {
-        "state", "title", "file_name", "file_size_mb", "file_url", "file_id", "error"
+        "state", "title", "file_name", "file_size_mb", "file_url", "file_id",
+        "error", "options",
     }
+    assert body["options"] == {}  # none requested -> empty, not null
+
+
+# --- options.target (WebApp v2 spec §4.3) ----------------------------------------
+
+async def test_job_options_echoed_in_status(client):
+    c, _, _ = client
+    r = await create_job(c, extra={"options": {"target": "video_1080"}})
+    assert r.status == 200
+    job_id = (await r.json())["id"]
+    body = await wait_for_state(c, job_id, {"done", "error"})
+    assert body["state"] == "done", body
+    assert body["options"] == {"target": "video_1080"}
+
+
+@pytest.mark.parametrize("target", [
+    "video_1080", "video_720", "video_480", "video_360", "audio_best",
+    "default",
+])
+async def test_job_every_documented_target_accepted(client, target):
+    c, _, _ = client
+    r = await create_job(c, extra={"options": {"target": target}})
+    assert r.status == 200
+    job_id = (await r.json())["id"]
+    body = await wait_for_state(c, job_id, {"done", "error"})
+    assert body["state"] == "done", body
+    assert body["options"] == {"target": target}
+
+
+async def test_job_options_without_target_echoes_empty(client):
+    c, _, _ = client
+    r = await create_job(c, extra={"options": {}})
+    assert r.status == 200
+    job_id = (await r.json())["id"]
+    body = await wait_for_state(c, job_id, {"done", "error"})
+    assert body["state"] == "done", body
+    assert body["options"] == {}
+
+
+async def test_job_unknown_target_400(client):
+    c, _, _ = client
+    r = await create_job(c, extra={"options": {"target": "video_4k"}})
+    assert r.status == 400
+    assert "Unknown download option" in (await r.json())["error"]
+
+
+@pytest.mark.parametrize("url", [
+    "https://soundcloud.com/artist/track",
+    "https://vimeo.com/123456",
+])
+async def test_job_target_on_non_youtube_400(client, url):
+    c, _, _ = client
+    r = await create_job(c, url=url, extra={"options": {"target": "video_720"}})
+    assert r.status == 400
+    assert "only available for YouTube" in (await r.json())["error"]
+
+
+async def test_job_non_youtube_without_options_still_fine(client):
+    c, _, _ = client
+    r = await create_job(c, url="https://soundcloud.com/artist/track")
+    assert r.status == 200
+    job_id = (await r.json())["id"]
+    body = await wait_for_state(c, job_id, {"done", "error"})
+    assert body["state"] == "done", body
+    assert body["options"] == {}
+
+
+@pytest.mark.parametrize("options", [
+    "video_720",            # not an object
+    {"target": 720},        # target not a string
+    {"target": None, "x": 1},
+    {"target": "video_720", "quality": "hi"},  # unknown option key
+])
+async def test_job_bad_options_shape_400(client, options):
+    c, _, _ = client
+    r = await create_job(c, extra={"options": options})
+    assert r.status == 400
+    error = (await r.json())["error"]
+    assert isinstance(error, str) and error
 
 
 # --- file download (Range matrix) ----------------------------------------------

@@ -5,10 +5,12 @@ import { COPY } from "./copy";
 import { Icon } from "./icons";
 import { LOGO } from "./logo";
 import { useMusic } from "./music";
+import { usePlayer } from "./use-player";
 import type { UiMsg } from "./components/chat-tab";
 import { ChatTab } from "./components/chat-tab";
 import { DownloadTab } from "./components/download-tab";
 import { MusicTab } from "./components/music-tab";
+import { NowPlaying } from "./components/now-playing";
 import { PlayerBar } from "./components/player-bar";
 import { Sheet } from "./components/sheet";
 import { haptic } from "./theme";
@@ -51,7 +53,14 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToastShow(false), ms);
   }, []);
 
-  const music = useMusic(tab === "music", showToast);
+  // The player outlives the music tab (v1 behavior: the bar persists);
+  // useMusic borrows it for the sheet's Play / 30s-preview actions.
+  const player = usePlayer(showToast);
+  const playerRef = useRef(player);
+  useEffect(() => {
+    playerRef.current = player;
+  });
+  const music = useMusic(tab === "music", showToast, player);
   const musicLive = useRef(music);
   useEffect(() => {
     musicLive.current = music;
@@ -136,9 +145,14 @@ export default function App() {
   );
 
   // ---- sheet Escape-to-close (v1 document keydown) ---------------------------------
+  // Now Playing is the top-most sheet: Escape closes it first, then the
+  // track sheet.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && musicLive.current.sheet) musicLive.current.sheetClose();
+      if (e.key !== "Escape") return;
+      const p = playerRef.current;
+      if (p.nowPlayingOpen) p.closeNowPlaying();
+      else if (musicLive.current.sheet) musicLive.current.sheetClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -205,9 +219,15 @@ export default function App() {
         </div>
 
         <PlayerBar
-          track={music.previewTrack}
-          playing={music.previewPlaying}
-          onToggle={music.previewToggle}
+          track={player.track}
+          mode={player.mode}
+          playing={player.playing}
+          onToggle={player.toggle}
+          onOpen={() => {
+            // the track sheet and Now Playing never stack
+            if (music.sheet) music.sheetClose();
+            player.openNowPlaying();
+          }}
         />
 
         <nav className="tabbar" aria-label="Tabs">
@@ -230,14 +250,22 @@ export default function App() {
           busy={music.sheet.busy}
           removeConfirm={music.sheet.removeConfirm}
           rmBusy={music.sheet.rmBusy}
+          canPlay={!!music.sheet.track.has_stream}
+          playlists={music.plList}
           onClose={music.sheetClose}
           onResend={music.sheetResend}
+          onPlay={music.sheetPlay}
           onPreview={music.sheetPreview}
           onRemoveClick={music.sheetRemoveClick}
           onKeep={music.sheetKeep}
           onRemoveYes={music.sheetRemoveYes}
+          onTagAssign={music.sheetTagAssign}
+          onTagUnlink={music.sheetTagUnlink}
+          onPlAdd={music.sheetPlAdd}
         />
       )}
+
+      {player.nowPlayingOpen && player.track && <NowPlaying p={player} />}
 
       <div
         className={"toast" + (toastShow ? " show" : "")}

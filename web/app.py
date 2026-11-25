@@ -25,10 +25,11 @@ import uuid
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 import validators
+import aiohttp
 from aiohttp import web
 from PIL import Image
 from telegram.constants import ChatAction, ParseMode
@@ -40,7 +41,7 @@ from connectors.preview import resolve_preview_url
 from utils.constants.messages import BOT_ID, MEDIA_CAPTION
 from utils.helpers import escape_html, prepare_cover
 from utils.storage import cleanup_media
-from utils.youtube_dl import YDL_OPTS
+from utils.youtube_dl import TARGETS, opts_for_target
 
 logger = getLogger(__name__)
 
@@ -133,11 +134,15 @@ def _ytdlp_run(url: str, job: dict | None = None):
     Runs in a worker thread (blocking network + disk). When `job` is
     passed, the thread flips it to the honest "downloading" state once
     the metadata is resolved (the state machine the SPA polls:
-    extracting -> downloading -> sending -> done).
+    extracting -> downloading -> sending -> done). The yt-dlp options
+    come from the job's `options.target` (spec §4.3; None = the v1
+    default 720p mp4).
     """
     from yt_dlp import YoutubeDL, utils as ytdl_utils
 
-    with YoutubeDL(YDL_OPTS) as ydl:
+    target = (job or {}).get("options", {}).get("target")
+    opts = opts_for_target(target)
+    with YoutubeDL(opts) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
         except ytdl_utils.DownloadError:
@@ -225,6 +230,17 @@ async def handle_auth(request: web.Request):
     return web.json_response({"user": {k: user.get(k) for k in ("id", "first_name", "last_name", "username")}})
 
 
+def _is_youtube_url(url: str) -> bool:
+    """The providers that take download options (spec §4.3): YouTube
+    only. Host match on the URL — the SPA decides whether to SHOW the
+    option row from the same rule; this is the server-side authority."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host in (
+        "youtube.com", "www.youtube.com", "m.youtube.com",
+        "music.youtube.com", "youtu.be",
+    )
+
+
 async def handle_create_job(request: web.Request):
     try:
         user = await _auth(request)
@@ -236,6 +252,27 @@ async def handle_create_job(request: web.Request):
     if not validators.url(url):
         return web.json_response({"error": "That doesn't look like a valid link."}, status=400)
 
+    # Optional download options (spec §4.3): a semantic `target` label,
+    # mapped server-side to yt-dlp formats — the client never sends a
+    # raw format string. YouTube only; unknown target -> 400.
+    options = body.get("options")
+    if options is not None:
+        if not isinstance(options, dict):
+            return web.json_response({"error": "Bad options."}, status=400)
+        if set(options) - {"target"}:
+            return web.json_response({"error": "Bad options."}, status=400)
+        target = options.get("target")
+        if target is not None:
+            if not isinstance(target, str) or target not in TARGETS:
+                return web.json_response({"error": "Unknown download option."}, status=400)
+            if not _is_youtube_url(url):
+                return web.json_response(
+                    {"error": "Download options are only available for YouTube links."},
+                    status=400)
+        options = {"target": target} if target is not None else {}
+    else:
+        options = {}
+
     jobs = request.app["jobs"]
     active = [j for j in jobs.values()
               if j["user_id"] == user_id and j["state"] not in ("done", "error")]
@@ -246,6 +283,7 @@ async def handle_create_job(request: web.Request):
         "id": uuid.uuid4().hex,
         "user_id": user_id,
         "url": url,
+        "options": options,
         "state": "starting",
         "title": None,
         "file_name": None,
@@ -276,7 +314,19 @@ async def handle_job_status(request: web.Request):
     if job is None:
         return web.json_response({"error": "Unknown job."}, status=404)
     return web.json_response({k: job[k] for k in
-                              ("state", "title", "file_name", "file_size_mb", "file_url", "file_id", "error")})
+                              ("state", "title", "file_name", "file_size_mb", "file_url", "file_id", "error", "options")})
+
+
+_JOB_MIME = {
+    ".mp4": "video/mp4", ".webm": "video/webm", ".m4v": "video/mp4",
+    ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
+    ".opus": "audio/ogg", ".wav": "audio/wav", ".flac": "audio/flac",
+}
+
+
+def _job_content_type(filename: str | None) -> str:
+    ext = os.path.splitext(filename or "")[1].lower()
+    return _JOB_MIME.get(ext, "application/octet-stream")
 
 
 async def handle_job_file(request: web.Request):
@@ -318,7 +368,7 @@ async def handle_job_file(request: web.Request):
     resp = web.StreamResponse(
         status=status,
         headers={
-            "Content-Type": "video/mp4",
+            "Content-Type": _job_content_type(job.get("file_name")),
             "Content-Disposition": f'attachment; filename="{job["file_name"]}"',
             "Access-Control-Allow-Origin": "https://web.telegram.org",
         },
@@ -414,9 +464,13 @@ def _iso_ts(dt) -> str | None:
     return dt.astimezone().isoformat()
 
 
-def _track_json(track) -> dict:
+def _track_json(track, tags=None) -> dict:
     """One LibraryTrack as SPA JSON (plan §12.14). `has_cover` gates the
-    tile's img — the cover itself rides the authenticated proxy route."""
+    tile's img — the cover itself rides the authenticated proxy route.
+    `has_stream` (v2 spec §5.2) gates the player: full-track playback is
+    offered only when the row still carries a Telegram file_id; the raw
+    id stays server-side (the stream URL embeds the bot token). `tags`
+    (v2 §4.2) is the track's chip row — batched by the caller."""
     return {
         "track_key": track.track_key,
         "title": track.title,
@@ -425,6 +479,8 @@ def _track_json(track) -> dict:
         "duration_sec": track.duration_sec,
         "duration": mlib.duration_fmt(track.duration_sec),
         "has_cover": bool(track.cover_url),
+        "has_stream": bool(track.file_id),
+        "tags": list(tags or ()),
         "spotify_url": track.spotify_url,
         "request_count": track.request_count,
         "added_on": _iso_ts(track.added_on),
@@ -467,6 +523,16 @@ async def handle_library(request: web.Request):
     day_iso = None
     query = ""
 
+    # `?tag=` (WebApp v2 §4.2): restrict ANY view to one tag's tracks.
+    # Empty set = the tag matches nothing (an empty page, not an error);
+    # None = DB failure (the honest unavailable state).
+    tag_param = (q.get("tag") or "").strip()
+    tag_keys = None
+    if tag_param:
+        tag_keys = await mlib.tagged_track_keys(tg_id, tag_param)
+        if tag_keys is None:
+            return _lib_unavailable()
+
     if view == "daily":
         days = await mlib.daily_days(tg_id)
         if days is None:
@@ -481,7 +547,7 @@ async def handle_library(request: web.Request):
                 day = date.fromisoformat(day_param)
             except ValueError:
                 return web.json_response({"error": "Bad day."}, status=400)
-            data = await mlib.daily_page(tg_id, day, page, page_size)
+            data = await mlib.daily_page(tg_id, day, page, page_size, tag_keys)
             if data is None:
                 return _lib_unavailable()
             tracks, total = data
@@ -500,6 +566,8 @@ async def handle_library(request: web.Request):
             return _lib_unavailable()
         # rows is the FULL matched set (the facade's frozen contract);
         # the page slices from it, like the chat's search snapshot
+        if tag_keys is not None:
+            rows = [t for t in rows if t.track_key in tag_keys]
         total = len(rows)
         pages = math.ceil(total / page_size) if total else 1
         if page > pages:
@@ -508,7 +576,8 @@ async def handle_library(request: web.Request):
         tracks = rows[start:start + page_size]
     else:  # latest / often / browse — the facade pages (and clamps)
         data = await mlib.library_page(
-            tg_id, view, sort=sort, page=page, page_size=page_size)
+            tg_id, view, sort=sort, page=page, page_size=page_size,
+            tag_keys=tag_keys)
         if data is None:
             return _lib_unavailable()
         tracks, total = data
@@ -517,16 +586,19 @@ async def handle_library(request: web.Request):
     if page > pages:
         page = 1  # echo the page the rows actually came from (the facade
         # re-clamps out-of-range pages to 1 — the rows may have moved)
+    tags_map = await mlib.track_tags_map(
+        tg_id, [t.track_key for t in tracks])
     return web.json_response({
         "view": view,
         "sort": sort,
         "query": query,
+        "tag": tag_param or None,
         "day": day_iso,
         "days": days_json,
         "page": page,
         "pages": pages,
         "total": total,
-        "tracks": [_track_json(t) for t in tracks],
+        "tracks": [_track_json(t, tags_map.get(t.track_key)) for t in tracks],
     })
 
 
@@ -798,6 +870,433 @@ async def handle_library_remove(request: web.Request):
     return web.json_response({"ok": True})
 
 
+# --- full playback: the Range proxy to the Telegram file (spec §3/§4.2) --------
+# The token embeds in the Telegram file URL, so the client never sees it:
+# every byte of full playback crosses this proxy. Range pass-through is
+# what lets <audio> seek + play without buffering the whole file.
+# Verified against the live API 2026-11-25: the file endpoint answers
+# 200 + Accept-Ranges and 206 + Content-Range for byte ranges.
+
+STREAM_FILE_PATH_TTL = 3600  # a getFile result is guaranteed ~1h (Bot API)
+STREAM_MAX_CACHED_PATHS = 500
+STREAM_UPSTREAM_TIMEOUT = aiohttp.ClientTimeout(
+    total=None, connect=15, sock_connect=15, sock_read=120)
+
+
+def _stream_session(app: web.Application) -> aiohttp.ClientSession:
+    """One shared upstream session per app (lazy — create_app has no
+    event loop yet; tests' loop provides one on first use)."""
+    session = app.get("stream_session")
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+        app["stream_session"] = session
+    return session
+
+
+async def _close_stream_session(app: web.Application) -> None:
+    session = app.get("stream_session")
+    if session is not None and not session.closed:
+        await session.close()
+
+
+async def _telegram_file_url(app: web.Application, file_id: str) -> str | None:
+    """file_id -> the full https://api.telegram.org/file/bot…/… URL,
+    cached for ~1h. None when Telegram no longer knows the file (the
+    handler then answers the same "no-source" as a row without file_id
+    — the SPA falls back to the 30s preview)."""
+    cache = app["stream_file_paths"]
+    now = time.time()
+    entry = cache.get(file_id)
+    if entry is not None and now - entry[1] < STREAM_FILE_PATH_TTL:
+        return entry[0]
+    try:
+        file_obj = await app["bot"].get_file(file_id)
+    except Exception:
+        logger.warning("stream getFile failed for a library file_id",
+                       exc_info=True)
+        return None
+    url = str(file_obj.file_path or "")
+    if not url.startswith(("http://", "https://")):
+        # PTB 22.x returns the full URL; an absolute path (a local Bot
+        # API server) or a bare path falls back to the public endpoint
+        url = f"https://api.telegram.org/file/bot{TOKEN}/{url.lstrip('/')}"
+    if len(cache) > STREAM_MAX_CACHED_PATHS:
+        for key in [k for k, v in cache.items()
+                    if now - v[1] >= STREAM_FILE_PATH_TTL]:
+            cache.pop(key, None)
+    cache[file_id] = (url, now)
+    return url
+
+
+_STREAM_MIME = {
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".ogg": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
+    ".flac": "audio/flac", ".mp4": "video/mp4", ".webm": "video/webm",
+}
+
+
+def _stream_content_type(url: str) -> str | None:
+    ext = os.path.splitext(urlsplit(url).path)[1].lower()
+    return _STREAM_MIME.get(ext)
+
+
+async def handle_library_stream(request: web.Request):
+    """GET /api/library/track/{track_key}/stream?initData=... — full
+    playback, proxied from Telegram with Range pass-through (spec §3).
+
+    Auth is the initData blob, like every library route. 404
+    {"error": "no-source"} covers BOTH a row without a file_id and a
+    file_id Telegram no longer serves — the SPA treats them identically
+    (30s preview + the honest "full playback unavailable" state)."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    track_key = request.match_info["track_key"]
+    track = await mlib.get_library_track(user["id"], track_key)
+    if track is None:
+        return web.json_response({"error": "Unknown track."}, status=404)
+    if not track.file_id:
+        return web.json_response({"error": "no-source"}, status=404)
+    file_url = await _telegram_file_url(request.app, track.file_id)
+    if file_url is None:
+        return web.json_response({"error": "no-source"}, status=404)
+
+    upstream_headers: dict[str, str] = {}
+    range_header = request.headers.get("Range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+    session = _stream_session(request.app)
+    try:
+        upstream = await session.get(
+            file_url, headers=upstream_headers,
+            timeout=STREAM_UPSTREAM_TIMEOUT)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        logger.warning("stream upstream fetch failed", exc_info=True)
+        return web.json_response(
+            {"error": "The source file is unavailable right now."}, status=502)
+    try:
+        if upstream.status in (404, 410):
+            # Telegram purged the file since getFile (or the file_id
+            # went stale): same contract as no file_id
+            return web.json_response({"error": "no-source"}, status=404)
+        if upstream.status == 416:
+            return web.Response(
+                status=416,
+                headers={"Content-Range":
+                         upstream.headers.get("Content-Range", "")})
+        if upstream.status not in (200, 206):
+            logger.warning("stream upstream answered %s", upstream.status)
+            return web.json_response(
+                {"error": "The source file is unavailable right now."},
+                status=502)
+        content_type = (_stream_content_type(file_url)
+                        or upstream.headers.get("Content-Type")
+                        or "audio/mpeg")
+        resp = web.StreamResponse(
+            status=upstream.status,
+            headers={
+                "Content-Type": content_type,
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "private, max-age=3600",
+            },
+        )
+        content_length = upstream.headers.get("Content-Length")
+        if content_length:
+            resp.headers["Content-Length"] = content_length
+        content_range = upstream.headers.get("Content-Range")
+        if content_range:
+            resp.headers["Content-Range"] = content_range
+        await resp.prepare(request)
+        async for chunk in upstream.content.iter_chunked(CHUNK_SIZE):
+            await resp.write(chunk)
+        await resp.write_eof()
+    finally:
+        upstream.release()
+    return resp
+
+
+# --- playlists (WebApp v2 spec §4.2) -------------------------------------------
+# Same error contract as the rest of the library: 401 anonymous, 503 the
+# honest "temporarily unavailable", 404 unknown id, 409 a name collision
+# (case-insensitive), 400 bad input.
+
+async def _json_body(request: web.Request) -> dict | None:
+    """The POST/PATCH body as a dict; None when it is not one (the
+    handler answers 400 — a malformed body must never 500)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _playlist_json(playlist, count: int) -> dict:
+    return {
+        "id": playlist.id,
+        "name": playlist.name,
+        "count": count,
+        "created_on": _iso_ts(playlist.created_on),
+        "updated_on": _iso_ts(playlist.updated_on),
+    }
+
+
+async def handle_library_playlists(request: web.Request):
+    """GET /api/library/playlists — every playlist with its track
+    count, newest first."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    rows = await mlib.playlist_list(user["id"])
+    if rows is None:
+        return _lib_unavailable()
+    return web.json_response({"playlists": rows})
+
+
+async def handle_library_playlist_create(request: web.Request):
+    """POST /api/library/playlists — {name}; 409 on a case-insensitive
+    duplicate, 201 with the playlist on success."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    body = await _json_body(request)
+    name = (body.get("name") or "").strip() if body else ""
+    if not name:
+        return web.json_response({"error": "Name required."}, status=400)
+    if len(name) > 120:
+        return web.json_response({"error": "Name too long."}, status=400)
+    result = await mlib.playlist_create(user["id"], name)
+    if result is None:
+        return _lib_unavailable()
+    if result == "duplicate":
+        return web.json_response(
+            {"error": "A playlist with this name already exists."}, status=409)
+    return web.json_response(result, status=201)
+
+
+async def handle_library_playlist_rename(request: web.Request):
+    """PATCH /api/library/playlists/{id} — {name}; 409 on a
+    case-insensitive collision, 404 for an unknown id."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    body = await _json_body(request)
+    name = (body.get("name") or "").strip() if body else ""
+    if not name:
+        return web.json_response({"error": "Name required."}, status=400)
+    if len(name) > 120:
+        return web.json_response({"error": "Name too long."}, status=400)
+    try:
+        playlist_id = int(request.match_info["id"])
+    except ValueError:
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    result = await mlib.playlist_rename(user["id"], playlist_id, name)
+    if result is None:
+        return _lib_unavailable()
+    if result == "missing":
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    if result == "duplicate":
+        return web.json_response(
+            {"error": "A playlist with this name already exists."}, status=409)
+    return web.json_response(result)
+
+
+async def handle_library_playlist_delete(request: web.Request):
+    """DELETE /api/library/playlists/{id} — deletes the playlist only
+    (the tracks stay in the library)."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    try:
+        playlist_id = int(request.match_info["id"])
+    except ValueError:
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    ok = await mlib.playlist_delete(user["id"], playlist_id)
+    if not ok:
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def handle_library_playlist_tracks(request: web.Request):
+    """GET /api/library/playlists/{id}/tracks?page= — the playlist's
+    tracks in playback order, paged, library row shape."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    q = request.rel_url.query
+    try:
+        playlist_id = int(request.match_info["id"])
+        page = max(1, int(q.get("page", "1") or 1))
+        page_size = int(q.get("page_size", str(LIB_DEFAULT_PAGE_SIZE)))
+    except ValueError:
+        return web.json_response({"error": "Bad page."}, status=400)
+    page_size = min(max(page_size, 1), LIB_MAX_PAGE_SIZE)
+    data = await mlib.playlist_tracks_page(
+        user["id"], playlist_id, page, page_size)
+    if data is None:
+        return _lib_unavailable()
+    if data == "missing":
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    tracks, total = data
+    pages = math.ceil(total / page_size) if total else 1
+    if page > pages:
+        page = 1
+    tags_map = await mlib.track_tags_map(
+        user["id"], [t.track_key for t in tracks])
+    return web.json_response({
+        "playlist_id": playlist_id,
+        "page": page,
+        "pages": pages,
+        "total": total,
+        "tracks": [_track_json(t, tags_map.get(t.track_key)) for t in tracks],
+    })
+
+
+async def handle_library_playlist_tracks_add(request: web.Request):
+    """POST /api/library/playlists/{id}/tracks — {track_keys: []};
+    idempotent (a member added twice counts once). The response splits
+    `added` from `unknown` (keys with no library row)."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    body = await _json_body(request)
+    keys = body.get("track_keys") if body else None
+    if not isinstance(keys, list) or not all(
+            isinstance(k, str) and k.strip() for k in keys):
+        return web.json_response({"error": "Bad track_keys."}, status=400)
+    try:
+        playlist_id = int(request.match_info["id"])
+    except ValueError:
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    result = await mlib.playlist_add_tracks(
+        user["id"], playlist_id, [k.strip() for k in keys])
+    if result is None:
+        return _lib_unavailable()
+    if result == "missing":
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    added, unknown = result
+    return web.json_response({"added": added, "unknown": unknown})
+
+
+async def handle_library_playlist_track_remove(request: web.Request):
+    """DELETE /api/library/playlists/{id}/tracks/{key} — remove one
+    membership (the track stays in the library)."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    try:
+        playlist_id = int(request.match_info["id"])
+    except ValueError:
+        return web.json_response({"error": "Unknown playlist."}, status=404)
+    ok = await mlib.playlist_remove_track(
+        user["id"], playlist_id, request.match_info["key"])
+    if not ok:
+        return web.json_response(
+            {"error": "This track is not in that playlist."}, status=404)
+    return web.json_response({"ok": True})
+
+
+# --- tags (WebApp v2 spec §4.2) -------------------------------------------------
+
+async def handle_library_tags(request: web.Request):
+    """GET /api/library/tags — every tag with its link count, A→Z."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    rows = await mlib.tag_list(user["id"])
+    if rows is None:
+        return _lib_unavailable()
+    return web.json_response({"tags": rows})
+
+
+async def handle_library_tag_create(request: web.Request):
+    """POST /api/library/tags — {name}; idempotent by design: a
+    case-variant of an existing name returns THAT tag (200, exists)."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    body = await _json_body(request)
+    name = (body.get("name") or "").strip() if body else ""
+    if not name:
+        return web.json_response({"error": "Name required."}, status=400)
+    if len(name) > mlib.TAG_NAME_MAX:
+        return web.json_response({"error": "Name too long."}, status=400)
+    result = await mlib.tag_create(user["id"], name)
+    if result is None:
+        return _lib_unavailable()
+    status = 200 if result.pop("exists", False) else 201
+    return web.json_response(result, status=status)
+
+
+async def handle_library_tag_delete(request: web.Request):
+    """DELETE /api/library/tags/{id} — deletes the tag; its links to
+    tracks cascade."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    try:
+        tag_id = int(request.match_info["id"])
+    except ValueError:
+        return web.json_response({"error": "Unknown tag."}, status=404)
+    ok = await mlib.tag_delete(user["id"], tag_id)
+    if not ok:
+        return web.json_response({"error": "Unknown tag."}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def handle_library_track_tags(request: web.Request):
+    """POST /api/library/track/{key}/tags — {names: []}: merge the
+    names onto the track (existing ones matched case-insensitively,
+    new ones created). Responds with the track's FULL resulting tag
+    list, so the sheet never needs a second read."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    body = await _json_body(request)
+    names = mlib.clean_tag_names(body.get("names")) if body else None
+    if names is None:
+        return web.json_response({"error": "Bad names."}, status=400)
+    track_key = request.match_info["track_key"]
+    result = await mlib.track_set_tags(user["id"], track_key, names)
+    if result is None:
+        return _lib_unavailable()
+    if result == "missing":
+        return web.json_response(
+            {"error": "This track is no longer in your library."}, status=404)
+    return web.json_response({"tags": result})
+
+
+async def handle_library_track_tag_delete(request: web.Request):
+    """DELETE /api/library/track/{key}/tags/{name} — unlink one tag
+    (case-insensitive); idempotent. Responds with the FULL resulting
+    tag list, the same contract as the merge endpoint, so the sheet
+    never needs a second read."""
+    try:
+        user = await _auth_required(request)
+    except Unauthorized:
+        return web.json_response({"error": "Unauthorized."}, status=401)
+    name = request.match_info["name"]
+    result = await mlib.track_remove_tag(
+        user["id"], request.match_info["track_key"], name)
+    if result is None:
+        return _lib_unavailable()
+    if result == "missing":
+        return web.json_response(
+            {"error": "This track is no longer in your library."}, status=404)
+    return web.json_response({"ok": True, "tags": result})
+
+
 # ---------------------------------------------------------------------------
 # server
 # ---------------------------------------------------------------------------
@@ -809,6 +1308,8 @@ def create_app(bot, base_url: str, spotdl=None) -> web.Application:
     app["resends"] = {}
     app["spotdl"] = spotdl  # the app's ladder step 3 (None in tests)
     app["base_url"] = base_url
+    app["stream_file_paths"] = {}  # file_id -> (url, fetched_at), ~1h TTL
+    app.on_shutdown.append(_close_stream_session)
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/health", handle_health)
     app.router.add_post("/api/auth", handle_auth)
@@ -818,6 +1319,28 @@ def create_app(bot, base_url: str, spotdl=None) -> web.Application:
     app.router.add_post("/api/chat", handle_chat)
     app.router.add_get("/api/library", handle_library)
     app.router.add_get("/api/library/cover/{track_key}", handle_library_cover)
+    app.router.add_get("/api/library/track/{track_key}/stream",
+                       handle_library_stream)
+    app.router.add_get("/api/library/playlists", handle_library_playlists)
+    app.router.add_post("/api/library/playlists",
+                        handle_library_playlist_create)
+    app.router.add_patch("/api/library/playlists/{id}",
+                         handle_library_playlist_rename)
+    app.router.add_delete("/api/library/playlists/{id}",
+                          handle_library_playlist_delete)
+    app.router.add_get("/api/library/playlists/{id}/tracks",
+                       handle_library_playlist_tracks)
+    app.router.add_post("/api/library/playlists/{id}/tracks",
+                        handle_library_playlist_tracks_add)
+    app.router.add_delete("/api/library/playlists/{id}/tracks/{key}",
+                          handle_library_playlist_track_remove)
+    app.router.add_get("/api/library/tags", handle_library_tags)
+    app.router.add_post("/api/library/tags", handle_library_tag_create)
+    app.router.add_delete("/api/library/tags/{id}", handle_library_tag_delete)
+    app.router.add_post("/api/library/track/{track_key}/tags",
+                        handle_library_track_tags)
+    app.router.add_delete("/api/library/track/{track_key}/tags/{name}",
+                          handle_library_track_tag_delete)
     app.router.add_post("/api/library/track/{track_key}/resend",
                         handle_library_resend)
     app.router.add_get("/api/library/track/{track_key}/resend/status",

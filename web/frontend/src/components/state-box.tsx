@@ -7,7 +7,9 @@ export type StateKind =
   | "no-results"
   | "unavailable"
   | "no-auth"
-  | "day-empty";
+  | "day-empty"
+  | "playlists-empty"
+  | "playlist-empty";
 
 export interface StateBoxProps {
   kind: StateKind;
@@ -53,6 +55,14 @@ export function StateBox({ kind, extra, onRetry }: StateBoxProps) {
       iconName = "calendar";
       t = COPY.dayEmpty;
       desc = COPY.dayEmptyDesc;
+      break;
+    case "playlists-empty":
+      t = COPY.playlistsEmpty;
+      desc = COPY.playlistsEmptyDesc;
+      break;
+    case "playlist-empty":
+      t = COPY.playlistEmpty;
+      desc = COPY.playlistEmptyDesc;
       break;
   }
   return (

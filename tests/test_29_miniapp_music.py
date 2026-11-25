@@ -39,7 +39,11 @@ import utils.decorators as decorators
 import utils.library as mlib
 import web.app as webapp
 from connectors.db import SessionLocal
+from models.playlist import Playlist
+from models.playlist_item import PlaylistItem
+from models.tag import Tag
 from models.track import Track
+from models.track_tag import TrackTag
 from tests.conftest import make_init_data, user_params
 
 FORGED = make_init_data(user_params(), token="wrong:token")
@@ -74,6 +78,14 @@ def test_tg():
     tg_id = _fresh_tg_id()
     yield tg_id
     db = SessionLocal()
+    # child tables first (track_tags/playlist_items), then the parents
+    db.query(TrackTag).filter(TrackTag.tg_id == tg_id).delete(synchronize_session=False)
+    db.query(PlaylistItem).filter(
+        PlaylistItem.playlist_id.in_(
+            db.query(Playlist.id).filter(Playlist.tg_id == tg_id))).delete(
+        synchronize_session=False)
+    db.query(Playlist).filter(Playlist.tg_id == tg_id).delete(synchronize_session=False)
+    db.query(Tag).filter(Tag.tg_id == tg_id).delete(synchronize_session=False)
     db.query(Track).filter(Track.tg_id == tg_id).delete(synchronize_session=False)
     db.commit()
     db.close()
@@ -255,6 +267,7 @@ async def test_library_latest_default_shape(client, test_tg):
     assert t["title"] == "New Song"
     assert t["duration"] == "1:05"
     assert t["has_cover"] is False
+    assert t["has_stream"] is False  # no file_id seeded -> preview only
     assert t["request_count"] == 1
     # timestamps carry the server's UTC offset (naive-local -> aware)
     assert "+" in t["last_requested"]
@@ -723,6 +736,613 @@ async def test_remove_db_failure_503(client, test_tg, monkeypatch):
                      json={"initData": init_for(test_tg)})
     assert r.status == 503
     assert "try again" in (await r.json())["error"]
+
+
+# --- tag filter (?tag=) -------------------------------------------------------------
+
+def _tag_track(tg_id: int, track_key: str, name: str) -> None:
+    """Seed one tag + link straight through the crud layer (the
+    endpoint tests exercise the HTTP surface separately)."""
+    db = SessionLocal()
+    try:
+        import cruds.library as cruds
+
+        tag = cruds.find_tag(db, tg_id, name)
+        if tag is None:
+            tag = cruds.create_tag(db, tg_id, name)
+        db.add(TrackTag(tg_id=tg_id, track_key=track_key, tag_id=tag.id))
+        db.commit()
+    finally:
+        db.close()
+
+
+async def test_library_tag_filter_latest(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "a", title="Alpha")
+    seed_track(test_tg, "b", title="Beta")
+    seed_track(test_tg, "c", title="Gamma")
+    _tag_track(test_tg, "a", "Rock")
+    _tag_track(test_tg, "c", "Rock")
+    r = await c.get("/api/library",
+                    params={"initData": ini, "tag": "Rock"})
+    assert r.status == 200
+    body = await r.json()
+    assert body["tag"] == "Rock"
+    assert body["total"] == 2
+    assert {t["track_key"] for t in body["tracks"]} == {"a", "c"}
+    # the track JSON embeds the chip row (v2 §4.2: the sheet reads it
+    # from the page, no second request)
+    by_key = {t["track_key"]: t for t in body["tracks"]}
+    assert by_key["a"]["tags"] == ["Rock"]
+    assert by_key["c"]["tags"] == ["Rock"]
+    # the filter is case-insensitive on both sides
+    r = await c.get("/api/library",
+                    params={"initData": ini, "tag": "rock"})
+    assert (await r.json())["total"] == 2
+
+
+async def test_library_tag_filter_unknown_tag_is_empty_not_error(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "a")
+    r = await c.get("/api/library",
+                    params={"initData": ini, "tag": "ghost-tag"})
+    assert r.status == 200
+    body = await r.json()
+    assert body["total"] == 0
+    assert body["tracks"] == []
+
+
+async def test_library_tag_filter_search_and_daily(client, test_tg):
+    today = datetime.now().date()
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "a", title="Stoned Pilsner", last=day_at(today, 9))
+    seed_track(test_tg, "b", title="Stoned Soup", last=day_at(today, 10))
+    _tag_track(test_tg, "a", "Fave")
+    r = await c.get("/api/library", params={
+        "initData": ini, "view": "search", "q": "stoned", "tag": "Fave"})
+    body = await r.json()
+    assert body["total"] == 1
+    assert body["tracks"][0]["track_key"] == "a"
+    r = await c.get("/api/library", params={
+        "initData": ini, "view": "daily", "day": today.isoformat(),
+        "tag": "Fave"})
+    body = await r.json()
+    assert body["total"] == 1
+    assert body["tracks"][0]["track_key"] == "a"
+
+
+async def test_library_tag_filter_503_when_db_down(client, test_tg,
+                                                   monkeypatch):
+    c, _, _ = client
+    seed_track(test_tg, "a")
+    monkeypatch.setattr(mlib, "tagged_track_keys",
+                        AsyncMock(return_value=None))
+    r = await c.get("/api/library",
+                    params={"initData": init_for(test_tg), "tag": "x"})
+    assert r.status == 503
+
+
+# --- playlists (spec §4.2) -----------------------------------------------------------
+
+async def test_playlist_create_list(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    r = await c.post("/api/library/playlists",
+                     json={"initData": ini, "name": "Road Trip"})
+    assert r.status == 201
+    created = await r.json()
+    assert created["name"] == "Road Trip"
+    assert created["count"] == 0
+    r = await c.get("/api/library/playlists", params={"initData": ini})
+    body = await r.json()
+    assert [p["name"] for p in body["playlists"]] == ["Road Trip"]
+
+
+async def test_playlist_create_duplicate_is_409_case_insensitive(client,
+                                                                 test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    assert (await c.post("/api/library/playlists",
+                         json={"initData": ini, "name": "Road Trip"})).status == 201
+    r = await c.post("/api/library/playlists",
+                     json={"initData": ini, "name": "road trip"})
+    assert r.status == 409
+    # and the ORIGINAL case survives (no shadow row)
+    body = await (await c.get("/api/library/playlists",
+                              params={"initData": ini})).json()
+    assert [p["name"] for p in body["playlists"]] == ["Road Trip"]
+
+
+@pytest.mark.parametrize("name", ["", "   ", "x" * 121])
+async def test_playlist_create_bad_name_400(client, test_tg, name):
+    c, _, _ = client
+    r = await c.post("/api/library/playlists",
+                     json={"initData": init_for(test_tg), "name": name})
+    assert r.status == 400
+
+
+async def test_playlist_rename(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    pid = (await (await c.post("/api/library/playlists",
+                               json={"initData": ini, "name": "One"}))
+           .json())["id"]
+    r = await c.patch(f"/api/library/playlists/{pid}",
+                      json={"initData": ini, "name": "Two"})
+    assert r.status == 200
+    assert (await r.json())["name"] == "Two"
+    # rename onto a case-variant of another playlist's name -> 409
+    await c.post("/api/library/playlists",
+                 json={"initData": ini, "name": "other"})
+    r = await c.patch(f"/api/library/playlists/{pid}",
+                      json={"initData": ini, "name": "OTHER"})
+    assert r.status == 409
+    # unknown id -> 404; bad name -> 400
+    assert (await c.patch("/api/library/playlists/999999",
+                          json={"initData": ini, "name": "X"})).status == 404
+    assert (await c.patch(f"/api/library/playlists/{pid}",
+                          json={"initData": ini, "name": ""})).status == 400
+
+
+async def test_playlist_tracks_add_idempotent_and_paged(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    for k in ("t1", "t2", "t3"):
+        seed_track(test_tg, k, title=k.upper())
+    pid = (await (await c.post("/api/library/playlists",
+                               json={"initData": ini, "name": "P"}))
+           .json())["id"]
+    # adding a member twice counts once
+    r = await c.post(f"/api/library/playlists/{pid}/tracks",
+                     json={"initData": ini, "track_keys": ["t1", "t2", "t1"]})
+    assert r.status == 200
+    assert (await r.json()) == {"added": 2, "unknown": 0}
+    # a key with no library row is reported, not 404 (batch semantics)
+    r = await c.post(f"/api/library/playlists/{pid}/tracks",
+                     json={"initData": ini, "track_keys": ["ghost", "t3"]})
+    assert (await r.json()) == {"added": 1, "unknown": 1}
+    r = await c.get(f"/api/library/playlists/{pid}/tracks",
+                    params={"initData": ini, "page_size": 2})
+    body = await r.json()
+    assert body["total"] == 3
+    assert body["pages"] == 2
+    assert [t["track_key"] for t in body["tracks"]] == ["t1", "t2"]
+    r = await c.get(f"/api/library/playlists/{pid}/tracks",
+                    params={"initData": ini, "page": 2, "page_size": 2})
+    assert [t["track_key"]
+            for t in (await r.json())["tracks"]] == ["t3"]
+
+
+async def test_playlist_track_remove(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "t1")
+    pid = (await (await c.post("/api/library/playlists",
+                               json={"initData": ini, "name": "P"}))
+           .json())["id"]
+    await c.post(f"/api/library/playlists/{pid}/tracks",
+                 json={"initData": ini, "track_keys": ["t1"]})
+    r = await c.delete(f"/api/library/playlists/{pid}/tracks/t1",
+                       params={"initData": ini})
+    assert r.status == 200
+    assert (await r.json()) == {"ok": True}
+    # again: not a member anymore -> 404
+    r = await c.delete(f"/api/library/playlists/{pid}/tracks/t1",
+                       params={"initData": ini})
+    assert r.status == 404
+    # the track itself stayed in the library
+    assert (await (await c.get("/api/library", params={"initData": ini}))
+            .json())["total"] == 1
+
+
+async def test_playlist_delete_keeps_tracks(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "t1")
+    pid = (await (await c.post("/api/library/playlists",
+                               json={"initData": ini, "name": "P"}))
+           .json())["id"]
+    await c.post(f"/api/library/playlists/{pid}/tracks",
+                 json={"initData": ini, "track_keys": ["t1"]})
+    r = await c.delete(f"/api/library/playlists/{pid}",
+                       params={"initData": ini})
+    assert r.status == 200
+    # gone for this owner
+    assert (await c.get(f"/api/library/playlists/{pid}/tracks",
+                        params={"initData": ini})).status == 404
+    # the track survived
+    assert (await (await c.get("/api/library", params={"initData": ini}))
+            .json())["total"] == 1
+    # unknown playlist -> 404
+    assert (await c.delete("/api/library/playlists/999999",
+                           params={"initData": ini})).status == 404
+
+
+async def test_playlist_owner_isolation(client, test_tg):
+    other = _fresh_tg_id()
+    c, _, _ = client
+    ini = init_for(test_tg)
+    pid = (await (await c.post("/api/library/playlists",
+                               json={"initData": ini, "name": "P"}))
+           .json())["id"]
+    other_ini = init_for(other)
+    # the other owner neither sees nor can touch it
+    body = await (await c.get("/api/library/playlists",
+                              params={"initData": other_ini})).json()
+    assert body["playlists"] == []
+    assert (await c.patch(f"/api/library/playlists/{pid}",
+                          json={"initData": other_ini,
+                                "name": "Stolen"})).status == 404
+    assert (await c.delete(f"/api/library/playlists/{pid}",
+                           params={"initData": other_ini})).status == 404
+    # cleanup the second owner's rows
+    db = SessionLocal()
+    db.query(Track).filter(Track.tg_id == other).delete(synchronize_session=False)
+    db.commit()
+    db.close()
+
+
+async def test_playlist_503_when_db_down(client, test_tg, monkeypatch):
+    c, _, _ = client
+    monkeypatch.setattr(mlib, "playlist_list", AsyncMock(return_value=None))
+    r = await c.get("/api/library/playlists",
+                    params={"initData": init_for(test_tg)})
+    assert r.status == 503
+    monkeypatch.setattr(mlib, "playlist_create",
+                        AsyncMock(return_value=None))
+    r = await c.post("/api/library/playlists",
+                     json={"initData": init_for(test_tg), "name": "X"})
+    assert r.status == 503
+
+
+# --- tags (spec §4.2) -----------------------------------------------------------------
+
+async def test_tag_create_and_idempotent_variant(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    r = await c.post("/api/library/tags",
+                     json={"initData": ini, "name": "Rock"})
+    assert r.status == 201
+    first = await r.json()
+    # a case-variant returns the SAME tag (200, exists) — idempotent
+    r = await c.post("/api/library/tags",
+                     json={"initData": ini, "name": "rock"})
+    assert r.status == 200
+    again = await r.json()
+    assert again["id"] == first["id"]
+    body = await (await c.get("/api/library/tags",
+                              params={"initData": ini})).json()
+    assert len(body["tags"]) == 1
+    assert body["tags"][0]["name"] == "Rock"
+
+
+@pytest.mark.parametrize("name", ["", "  ", "x" * 81])
+async def test_tag_create_bad_name_400(client, test_tg, name):
+    c, _, _ = client
+    r = await c.post("/api/library/tags",
+                     json={"initData": init_for(test_tg), "name": name})
+    assert r.status == 400
+
+
+async def test_track_tags_merge(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "k1")
+    r = await c.post("/api/library/track/k1/tags",
+                     json={"initData": ini, "names": ["Rock", "jazz"]})
+    assert r.status == 200
+    assert (await r.json())["tags"] == ["jazz", "Rock"]  # A->Z on lower()
+    # re-sending an existing name (case-variant) adds nothing
+    r = await c.post("/api/library/track/k1/tags",
+                     json={"initData": ini, "names": ["ROCK", "  ", "blues"]})
+    assert (await r.json())["tags"] == ["blues", "jazz", "Rock"]
+    # a track with no library row -> 404, bad input -> 400
+    assert (await c.post("/api/library/track/ghost/tags",
+                         json={"initData": ini, "names": ["x"]})) \
+        .status == 404
+    assert (await c.post("/api/library/track/k1/tags",
+                         json={"initData": ini, "names": "nope"})) \
+        .status == 400
+
+
+async def test_track_tag_unlink(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "k1")
+    await c.post("/api/library/track/k1/tags",
+                 json={"initData": ini, "names": ["Rock", "jazz"]})
+    # unlink is case-insensitive and answers with the FULL remaining
+    # list (the sheet contract)
+    r = await c.delete("/api/library/track/k1/tags/rock",
+                       params={"initData": ini})
+    assert r.status == 200
+    assert (await r.json()) == {"ok": True, "tags": ["jazz"]}
+    # idempotent: unlinking a tag that is not linked is not an error
+    r = await c.delete("/api/library/track/k1/tags/rock",
+                       params={"initData": ini})
+    assert r.status == 200
+    assert (await r.json())["tags"] == ["jazz"]
+    # an unknown track is a 404 either way
+    assert (await c.delete("/api/library/track/ghost/tags/rock",
+                           params={"initData": ini})).status == 404
+
+
+async def test_tag_delete_cascades_links(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "k1")
+    tag_id = (await (await c.post("/api/library/tags",
+                                  json={"initData": ini, "name": "Rock"}))
+              .json())["id"]
+    await c.post("/api/library/track/k1/tags",
+                 json={"initData": ini, "names": ["Rock"]})
+    r = await c.delete(f"/api/library/tags/{tag_id}",
+                       params={"initData": ini})
+    assert r.status == 200
+    db = SessionLocal()
+    try:
+        left = (db.query(TrackTag)
+                .filter(TrackTag.tg_id == test_tg).count())
+        tags = (db.query(Tag).filter(Tag.tg_id == test_tg).count())
+    finally:
+        db.close()
+    assert left == 0  # the link went with the tag
+    assert tags == 0
+    # unknown tag id -> 404
+    assert (await c.delete("/api/library/tags/999999",
+                           params={"initData": ini})).status == 404
+
+
+async def test_tag_503_when_db_down(client, test_tg, monkeypatch):
+    c, _, _ = client
+    monkeypatch.setattr(mlib, "tag_list", AsyncMock(return_value=None))
+    r = await c.get("/api/library/tags",
+                    params={"initData": init_for(test_tg)})
+    assert r.status == 503
+    monkeypatch.setattr(mlib, "track_set_tags", AsyncMock(return_value=None))
+    seed_track(test_tg, "k1")
+    r = await c.post("/api/library/track/k1/tags",
+                     json={"initData": init_for(test_tg), "names": ["x"]})
+    assert r.status == 503
+
+
+# --- remove cascades (spec §4.1 orphan pruning) --------------------------------------
+
+async def test_remove_track_cascades_playlist_links_and_tags(client, test_tg):
+    c, _, _ = client
+    ini = init_for(test_tg)
+    seed_track(test_tg, "k1")
+    pid = (await (await c.post("/api/library/playlists",
+                               json={"initData": ini, "name": "P"}))
+           .json())["id"]
+    await c.post(f"/api/library/playlists/{pid}/tracks",
+                 json={"initData": ini, "track_keys": ["k1"]})
+    await c.post("/api/library/track/k1/tags",
+                 json={"initData": ini, "names": ["Rock"]})
+    assert (await c.post("/api/library/track/k1/remove",
+                         json={"initData": ini})).status == 200
+    db = SessionLocal()
+    try:
+        items = (db.query(PlaylistItem)
+                 .filter(PlaylistItem.playlist_id == pid).count())
+        links = (db.query(TrackTag)
+                 .filter(TrackTag.tg_id == test_tg).count())
+        tag_rows = (db.query(Tag).filter(Tag.tg_id == test_tg).count())
+    finally:
+        db.close()
+    assert items == 0  # the playlist lost its member
+    assert links == 0  # the tag lost its link
+    assert tag_rows == 1  # the tag itself stays (count reads 0)
+
+
+# --- stream: the Range proxy (spec §3) -------------------------------------------------
+
+class _UpstreamResp:
+    """Emulates the Telegram file endpoint over an in-memory body:
+    Range-aware (200/206/416), the header set the real endpoint sends."""
+
+    def __init__(self, data: bytes, headers: dict):
+        self._full = data
+        rng = (headers or {}).get("Range", "")
+        self.status = 200
+        self.headers = {"Content-Type": "application/octet-stream",
+                        "Accept-Ranges": "bytes"}
+        if rng.startswith("bytes="):
+            spec = rng[6:]
+            start_s, _, end_s = spec.partition("-")
+            start = int(start_s) if start_s else 0
+            end = int(end_s) if end_s else len(data) - 1
+            if start >= len(data):
+                self.status = 416
+                self.headers["Content-Range"] = f"bytes */{len(data)}"
+                self._data = b""
+            else:
+                self.status = 206
+                end = min(end, len(data) - 1)
+                self.headers["Content-Range"] = \
+                    f"bytes {start}-{end}/{len(data)}"
+                self._data = data[start:end + 1]
+        else:
+            self._data = data
+        self.headers["Content-Length"] = str(len(self._data))
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    @property
+    def content(self):
+        data = self._data
+
+        class _Content:
+            async def iter_chunked(self, n):
+                for i in range(0, len(data), n):
+                    yield data[i:i + n]
+
+        return _Content()
+
+    def release(self):
+        pass
+
+
+class _Upstream:
+    """A stand-in for the shared upstream aiohttp session."""
+
+    def __init__(self, data: bytes = b""):
+        self.data = data
+        self.closed = False
+        self.requests = []
+
+    async def get(self, url, headers=None, timeout=None):
+        self.requests.append(dict(headers or {}))
+        return _UpstreamResp(self.data, headers)
+
+    async def close(self):
+        self.closed = True
+
+
+def _fake_bot_file(fake_bot, path: str):
+    """PTB 22.x get_file returns the FULL url as `file_path`."""
+    from types import SimpleNamespace
+    fake_bot.get_file = AsyncMock(
+        return_value=SimpleNamespace(file_path=path))
+
+
+async def test_stream_proxies_full_track(client, monkeypatch):
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1", file_id="CQACfake")
+    upstream = _Upstream(b"0123456789")
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: upstream)
+    _fake_bot_file(fake_bot,
+                   "https://api.telegram.org/file/botx/music/file_1.mp3")
+    r = await c.get("/api/library/track/k1/stream", params={"initData": ini})
+    assert r.status == 200
+    assert await r.read() == b"0123456789"
+    assert r.headers["Accept-Ranges"] == "bytes"
+    # the .mp3 path wins over the endpoint's octet-stream
+    assert r.headers["Content-Type"] == "audio/mpeg"
+    assert fake_bot.get_file.await_args.args[0] == "CQACfake"
+
+
+async def test_stream_range_passthrough(client, monkeypatch):
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1", file_id="CQACfake")
+    upstream = _Upstream(b"0123456789")
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: upstream)
+    _fake_bot_file(fake_bot,
+                   "https://api.telegram.org/file/botx/music/file_1.mp3")
+    r = await c.get("/api/library/track/k1/stream",
+                    params={"initData": ini},
+                    headers={"Range": "bytes=2-5"})
+    assert r.status == 206
+    assert await r.read() == b"2345"
+    assert r.headers["Content-Range"] == "bytes 2-5/10"
+    assert r.headers["Content-Length"] == "4"
+    # the client's Range reached the upstream verbatim
+    assert upstream.requests[0]["Range"] == "bytes=2-5"
+
+
+async def test_stream_range_beyond_end_416(client, monkeypatch):
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1", file_id="CQACfake")
+    upstream = _Upstream(b"0123456789")
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: upstream)
+    _fake_bot_file(fake_bot,
+                   "https://api.telegram.org/file/botx/music/file_1.mp3")
+    r = await c.get("/api/library/track/k1/stream",
+                    params={"initData": ini},
+                    headers={"Range": "bytes=99-"})
+    assert r.status == 416
+
+
+async def test_stream_no_file_id_404_no_source(client, monkeypatch):
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1")  # no file_id (backfilled / preview-only row)
+    upstream = _Upstream(b"")
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: upstream)
+    fake_bot.get_file = AsyncMock()
+    r = await c.get("/api/library/track/k1/stream", params={"initData": ini})
+    assert r.status == 404
+    assert (await r.json()) == {"error": "no-source"}
+    fake_bot.get_file.assert_not_awaited()
+
+
+async def test_stream_getfile_failure_is_no_source(client, monkeypatch):
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1", file_id="CQACstale")
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: _Upstream())
+    fake_bot.get_file = AsyncMock(side_effect=Exception("gone"))
+    r = await c.get("/api/library/track/k1/stream", params={"initData": ini})
+    assert r.status == 404
+    assert (await r.json()) == {"error": "no-source"}
+
+
+async def test_stream_upstream_404_is_no_source(client, monkeypatch):
+    """Telegram purged the file after getFile succeeded (the 404
+    anomaly): same contract as no file_id."""
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1", file_id="CQACfake")
+    upstream = _Upstream(b'{"ok":false,"error_code":404,"description":"Not Found"}')
+    upstream.data = b""
+    # force the upstream to answer 404
+    async def _get_404(url, headers=None, timeout=None):
+        upstream.requests.append(dict(headers or {}))
+
+        class _R:
+            status = 404
+            headers = {}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def release(self):
+                pass
+        return _R()
+    monkeypatch.setattr(upstream, "get", _get_404)
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: upstream)
+    _fake_bot_file(fake_bot,
+                   "https://api.telegram.org/file/botx/music/file_1.mp3")
+    r = await c.get("/api/library/track/k1/stream", params={"initData": ini})
+    assert r.status == 404
+    assert (await r.json()) == {"error": "no-source"}
+
+
+async def test_stream_caches_file_path_per_file_id(client, monkeypatch):
+    c, fake_bot, app = client
+    ini = init_for(c_tg := _fresh_tg_id())
+    seed_track(c_tg, "k1", file_id="CQACfake")
+    upstream = _Upstream(b"abc")
+    monkeypatch.setattr(webapp, "_stream_session", lambda a: upstream)
+    _fake_bot_file(fake_bot,
+                   "https://api.telegram.org/file/botx/music/file_1.mp3")
+    for _ in range(2):
+        r = await c.get("/api/library/track/k1/stream",
+                        params={"initData": ini})
+        assert r.status == 200
+        await r.read()
+    # one getFile for two plays (the ~1h cache)
+    assert fake_bot.get_file.await_count == 1
+
+
+async def test_stream_unknown_track_404(client, monkeypatch):
+    c, fake_bot, app = client
+    r = await c.get("/api/library/track/ghost/stream",
+                    params={"initData": init_for(_fresh_tg_id())})
+    assert r.status == 404
 
 
 # --- cover proxy -------------------------------------------------------------------

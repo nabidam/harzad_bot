@@ -2,8 +2,26 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, jobAlive } from "../api/client";
 import type { Job, User } from "../api/types";
 import { COPY, STATE_LABEL, fmtElapsed } from "../copy";
+import {
+  buildOptions,
+  isYoutubeUrl,
+  loadTarget,
+  saveTarget,
+  TARGETS,
+  type Target,
+} from "../download-options";
 import { Icon } from "../icons";
 import { haptic, inTG, tgDownloadFile, tgOpenTelegramLink } from "../theme";
+
+/** Chip labels per target (the order is TARGETS': 1080 → default). */
+const TARGET_LABELS: Record<Target, string> = {
+  video_1080: COPY.targetVideo1080,
+  video_720: COPY.targetVideo720,
+  video_480: COPY.targetVideo480,
+  video_360: COPY.targetVideo360,
+  audio_best: COPY.targetAudio,
+  default: COPY.targetDefault,
+};
 
 export interface DownloadTabProps {
   user: User | null;
@@ -18,6 +36,10 @@ export function DownloadTab({ user, authed, toast }: DownloadTabProps) {
   const [elapsed, setElapsed] = useState(0);
   const [formError, setFormError] = useState<string | null>(null);
   const [result, setResult] = useState<Job | null>(null);
+  // Download options (v2 §4.3): the last-used target survives reloads;
+  // the chip row only shows for YouTube URLs.
+  const [target, setTarget] = useState<Target>(() => loadTarget());
+  const [activeTarget, setActiveTarget] = useState<Target | null>(null);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // v1 startElapsed: 1s tick, visible after 5s.
@@ -67,15 +89,18 @@ export function DownloadTab({ user, authed, toast }: DownloadTabProps) {
     setResult(null);
     setBusy(true);
     setTaskLabel(STATE_LABEL.starting);
+    // v2 §4.3: YouTube-only quality options; remembered in localStorage.
+    const opts = buildOptions(u, target);
+    setActiveTarget(opts ? target : null);
     try {
-      const job = await api<Job>("/api/jobs", { url: u });
+      const job = await api<Job>("/api/jobs", opts ? { url: u, options: opts } : { url: u });
       poll(job.id);
     } catch (e) {
       setBusy(false);
       setFormError(e instanceof Error ? e.message : String(e));
       haptic("error");
     }
-  }, [url, poll]);
+  }, [url, target, poll]);
 
   const saveFile = useCallback(async () => {
     const job = result;
@@ -174,7 +199,14 @@ export function DownloadTab({ user, authed, toast }: DownloadTabProps) {
               <Icon name="loader-2" className="spin" />
             </span>
             <div className="task-body">
-              <div className="task-label" id="task-label">{taskLabel}</div>
+              <div className="task-label" id="task-label">
+                {taskLabel}
+                {activeTarget && (
+                  <span className="task-target" id="task-target">
+                    {TARGET_LABELS[activeTarget]}
+                  </span>
+                )}
+              </div>
               {elapsed >= 5 && (
                 <div className="task-elapsed num" id="task-elapsed">
                   <span id="task-elapsed-ico">
@@ -211,6 +243,27 @@ export function DownloadTab({ user, authed, toast }: DownloadTabProps) {
           />
         </div>
         <div className="platforms">YouTube &middot; Instagram &middot; Pinterest &middot; TikTok &middot; Spotify</div>
+        {isYoutubeUrl(url.trim()) && (
+          <div className="chips" id="quality-chips" role="group" aria-label={COPY.dlQuality}>
+            {TARGETS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={"chip" + (target === t ? " active" : "")}
+                data-target={t}
+                aria-pressed={target === t}
+                disabled={busy}
+                onClick={() => {
+                  setTarget(t);
+                  saveTarget(t);
+                  haptic("light");
+                }}
+              >
+                {TARGET_LABELS[t]}
+              </button>
+            ))}
+          </div>
+        )}
         <button className="btn primary" id="dl-btn" disabled={busy} onClick={startDownload}>Download</button>
         {formError && (
           <div className="form-err" id="dl-err">

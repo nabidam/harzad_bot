@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import type { Track } from "../api/types";
+import { useEffect, useRef, useState } from "react";
+import type { Playlist, Track } from "../api/types";
 import { COPY, relTime } from "../copy";
 import { Cover } from "./cover";
 import { Icon } from "../icons";
@@ -18,10 +18,17 @@ export interface SheetProps {
   rmBusy: boolean;
   onClose: () => void;
   onResend: () => void;
+  onPlay: () => void; // full track (visible only when canPlay)
   onPreview: () => void;
   onRemoveClick: () => void;
   onKeep: () => void;
   onRemoveYes: () => void;
+  canPlay: boolean; // the row still carries a Telegram file_id
+  // tags + playlists (v2 §5.3): the track's tag row and the picker
+  playlists: Playlist[];
+  onTagAssign: (name: string) => void;
+  onTagUnlink: (name: string) => void;
+  onPlAdd: (plId: number) => void;
 }
 
 function statusIcon(cls: SheetStatus["cls"] | undefined): string | null {
@@ -38,7 +45,31 @@ export function Sheet(p: SheetProps) {
     xRef.current?.focus({ preventScroll: true });
   }, []);
 
+  // --- tags + playlists (v2 §5.3) --------------------------------------------
+  const [tagInput, setTagInput] = useState("");
+  const [tagArm, setTagArm] = useState<string | null>(null);
+  const [plPickOpen, setPlPickOpen] = useState(false);
+  const armTimer = useRef<number | null>(null);
   const t = p.track;
+
+  // a new track opens: the tag input, the armed × and the picker reset
+  useEffect(() => {
+    setTagInput("");
+    setTagArm(null);
+    setPlPickOpen(false);
+  }, [t.track_key]);
+  useEffect(() => {
+    return () => {
+      if (armTimer.current) window.clearTimeout(armTimer.current);
+    };
+  }, []);
+
+  const armTag = (n: string) => {
+    setTagArm(n);
+    if (armTimer.current) window.clearTimeout(armTimer.current);
+    armTimer.current = window.setTimeout(() => setTagArm(null), 2600);
+  };
+  const tagCount = t.tags?.length ?? 0;
   const stats: Array<[string, string]> = [
     [COPY.statDuration, t.duration || ""],
     [
@@ -91,10 +122,118 @@ export function Sheet(p: SheetProps) {
             </div>
           ))}
         </div>
+
+        {/* tags (v2 §5.3): the track's chip row + inline add. The × is
+            two-tap (arm, then confirm) — no confirm dialogs in a sheet. */}
+        <div className="sheet-tags" id="sheet-tags" hidden={p.removeConfirm}>
+          <div className="section-label">{COPY.tagsLabel}</div>
+          <div className="sheet-tagrow">
+            {(t.tags ?? []).map((n) => (
+              <span
+                key={n}
+                className={"mini-tag" + (tagArm === n ? " arm" : "")}
+                data-tag={n}
+              >
+                {n}
+                <button
+                  type="button"
+                  aria-label={COPY.deleteTagQ(n)}
+                  onClick={() =>
+                    tagArm === n ? p.onTagUnlink(n) : armTag(n)
+                  }
+                >
+                  <Icon name="x" />
+                </button>
+              </span>
+            ))}
+            {tagCount === 0 && (
+              <span className="mini-tag empty">{COPY.noTags}</span>
+            )}
+            <form
+              className="tagadd"
+              id="sheet-tag-add"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const v = tagInput.trim();
+                if (!v) return;
+                setTagInput("");
+                p.onTagAssign(v);
+              }}
+            >
+              <input
+                type="text"
+                value={tagInput}
+                placeholder={COPY.tagPlaceholder}
+                maxLength={40}
+                autoComplete="off"
+                aria-label={COPY.tagAdd}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setTagInput("");
+                }}
+              />
+              <button type="submit" className="go" aria-label={COPY.tagAdd}>
+                <span>
+                  <Icon name="plus" />
+                </span>
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* add to playlist (v2 §5.3) */}
+        {p.playlists.length > 0 && (
+          <div className="sheet-pl" id="sheet-playlists" hidden={p.removeConfirm}>
+            <button
+              type="button"
+              className="section-link"
+              id="sheet-pl-toggle"
+              aria-expanded={plPickOpen}
+              onClick={() => setPlPickOpen(!plPickOpen)}
+            >
+              {COPY.addToPlaylist}
+              <Icon
+                name="chevron-right"
+                className={plPickOpen ? "flip" : undefined}
+              />
+            </button>
+            {plPickOpen && (
+              <div className="sheet-pl-list">
+                {p.playlists.map((pl) => (
+                  <button
+                    type="button"
+                    className="plpick"
+                    key={pl.id}
+                    data-pl={pl.id}
+                    onClick={() => {
+                      p.onPlAdd(pl.id);
+                      setPlPickOpen(false);
+                    }}
+                  >
+                    <span className="plpick-name">{pl.name}</span>
+                    <span className="num">{pl.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div id="sheet-actions" hidden={p.removeConfirm}>
-          <button className="btn primary" id="sheet-resend" disabled={p.busy} onClick={p.onResend}>
-            <Icon name="refresh" />{" " + COPY.getAgain}
-          </button>
+          {p.canPlay ? (
+            <button className="btn primary" id="sheet-play" onClick={p.onPlay}>
+              <Icon name="player-play" />{" " + COPY.play}
+            </button>
+          ) : (
+            <>
+              <button className="btn primary" id="sheet-resend" disabled={p.busy} onClick={p.onResend}>
+                <Icon name="refresh" />{" " + COPY.getAgain}
+              </button>
+              <div className="hint sheet-hint" id="sheet-stream-hint">
+                {COPY.streamUnavailableHint}
+              </div>
+            </>
+          )}
           <div className="minirow">
             <button className="btn ghost" id="sheet-preview" disabled={p.busy} onClick={p.onPreview}>
               <Icon name="player-play" />{" " + COPY.previewBtn}
