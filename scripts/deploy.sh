@@ -26,6 +26,25 @@ git reset --hard "origin/$BRANCH"
 echo ">> Syncing dependencies (uv)"
 uv sync --frozen --no-dev
 
+# The VPS is node-free: the built SPA ships on the webapp-dist branch
+# (GitHub Actions, .github/workflows/webapp.yml). Extract it and rsync it
+# over the committed snapshot. Any failure here keeps the previous
+# web/static/ intact — a broken build must never blank the app.
+echo ">> Syncing built SPA (webapp-dist)"
+TMP_STATIC="$(mktemp -d)"
+trap 'rm -rf "$TMP_STATIC"' EXIT
+if git fetch origin webapp-dist; then
+    git archive origin/webapp-dist -- web/static | tar -x -C "$TMP_STATIC"
+    if [ -s "$TMP_STATIC/web/static/index.html" ]; then
+        rsync -a --delete "$TMP_STATIC/web/static/" "$APP_DIR/web/static/"
+        echo "Static synced: $(sha256sum "$APP_DIR/web/static/index.html" | cut -c1-16)"
+    else
+        echo "!! webapp-dist has no web/static/index.html — keeping previous static dir"
+    fi
+else
+    echo "!! webapp-dist branch unavailable — keeping previous static dir"
+fi
+
 echo ">> Applying DB migrations (alembic)"
 uv run --frozen --no-dev alembic upgrade head
 

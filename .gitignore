@@ -114,6 +114,9 @@ venv.bak/
 *.ytdl
 login/*
 
+# React SPA (web/frontend): node_modules is build-time only
+web/frontend/node_modules/
+
 .env.dev
 .env.prod
 

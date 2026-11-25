@@ -777,14 +777,30 @@ async def test_cover_unknown_track_404(client, test_tg, monkeypatch, tmp_path):
     assert r.status == 404
 
 
-# --- SPA copy (test_08 pattern: pinned against the static file) -------------------
+# --- SPA copy (test_08 pattern: pinned against the React source tree) -------------
+
+def _spa_source() -> str:
+    """The React source tree, concatenated (v2: the SPA is React + TS in
+    web/frontend/src, built by CI into the single inlined
+    web/static/index.html). Copy is pinned against the source: JSX markup
+    pins like ``>My music<`` only exist pre-compile. Test files are
+    excluded so structural pins scan production code only."""
+    root = Path(__file__).resolve().parent.parent / "web" / "frontend" / "src"
+    parts = [
+        p.read_text(encoding="utf-8")
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.suffix in (".ts", ".tsx")
+        and "__tests__" not in p.parts
+    ]
+    assert parts, f"no React source found under {root}"
+    return "\n".join(parts)
+
 
 def test_miniapp_music_copy_matches_deck():
     """The SPA copy aligns with the chat deck (utils/copy.py LIB_*) —
     same states, same tone (plan §12.14). API-rendered errors (search
     too short, exhausted re-send) are pinned on their endpoint tests."""
-    html = (Path(__file__).resolve().parent.parent / "web" / "static"
-            / "index.html").read_text(encoding="utf-8")
+    html = _spa_source()
     for s in (
         ">My music<",                                   # nav tab
         'data-view="daily">Daily<',                     # the owner's Daily menu
@@ -806,26 +822,38 @@ def test_miniapp_music_copy_matches_deck():
 
 
 def test_miniapp_music_sends_init_data():
-    """The SPA must attach initData to EVERY library call.
+    """Every library call carries initData — structurally.
 
     Regression (prod, 2026-11-24): musicUrl() and the track action calls
     omitted initData, so every /api/library request 401'd and the catch-all
     error branch rendered the misleading "temporarily unavailable" card.
-    The server accepts initData from the query string (GETs) and the JSON
-    body (POSTs) — the SPA must use one of the two on each call."""
-    html = (Path(__file__).resolve().parent.parent / "web" / "static"
-            / "index.html").read_text(encoding="utf-8")
-    m = re.search(r"function musicUrl\(page\)\{.*?\n\}", html, re.S)
-    assert m, "musicUrl() missing from the SPA"
-    assert "initData" in m.group(0), "musicUrl() must carry initData"
-    m = re.search(r"function pollResend\(key\)\{.*?\n\}", html, re.S)
-    assert m, "pollResend() missing from the SPA"
-    assert "initData" in m.group(0), "resend/status GET must carry initData"
-    for call in (
-        '"/api/library/track/" + key + "/resend",\n      { initData',
-        '"/api/library/track/" + key + "/preview",\n      { initData',
-        '"/api/library/track/" + key + "/remove",\n      { initData',
-    ):
-        assert call in html, f"track action call missing initData: {call!r}"
-    assert 'showMusicState("no-auth")' in html, \
+
+    v2 design: src/api/client.ts is the app's ONLY fetch site. api()
+    injects initData into every POST JSON body (empty string outside
+    Telegram), and withInit() appends it to GET query strings. A fetch
+    anywhere else would bypass the injection, so this test pins the
+    centralization: exactly one fetch( in the tree, in client.ts, with
+    the encoding machinery — plus music.ts's error mapping (401/Telegram
+    -> the no-auth state, never 'temporarily unavailable')."""
+    root = Path(__file__).resolve().parent.parent / "web" / "frontend" / "src"
+    client = (root / "api" / "client.ts").read_text(encoding="utf-8")
+    fetch_sites = [
+        str(p.relative_to(root))
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.suffix in (".ts", ".tsx")
+        and "__tests__" not in p.parts
+        and "fetch(" in p.read_text(encoding="utf-8")
+    ]
+    assert fetch_sites == ["api/client.ts"], (
+        "fetch( must exist only in api/client.ts, found: %r" % fetch_sites
+    )
+    assert "initData" in client and "encodeURIComponent" in client, (
+        "client.ts must own the initData injection + query encoding"
+    )
+    music = (root / "music.ts").read_text(encoding="utf-8")
+    assert "no-auth" in music, (
         "401s must render the no-auth state, not 'temporarily unavailable'"
+    )
+    assert re.search(r"Telegram\|Unauthorized", music), (
+        "the 401/Telegram branch must stay in the load error mapping"
+    )

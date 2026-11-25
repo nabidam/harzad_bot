@@ -30,12 +30,29 @@ async def test_index_serves_spa(client):
     assert text == static.read_text(encoding="utf-8")
 
 
+def _spa_source() -> str:
+    """The React source tree, concatenated (v2: the SPA is React + TS in
+    web/frontend/src, built by CI into the single inlined
+    web/static/index.html). Copy is pinned against the source: JSX markup
+    pins like ``>Download<`` only exist pre-compile, and the served built
+    file is pinned separately by test_index_serves_spa (byte-equality
+    with the committed snapshot)."""
+    root = Path(__file__).resolve().parent.parent / "web" / "frontend" / "src"
+    parts = [
+        p.read_text(encoding="utf-8")
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.suffix in (".ts", ".tsx")
+        and "__tests__" not in p.parts
+    ]
+    assert parts, f"no React source found under {root}"
+    return "\n".join(parts)
+
+
 def test_mini_app_copy_matches_spec_deck():
     """Spec §12.3: the Mini App copy is the canonical deck text, aligned
-    with the bot's status vocabulary and error tone (spec §12.2). The SPA
-    is a static file, so the strings are pinned against it here."""
-    static = Path(__file__).resolve().parent.parent / "web" / "static" / "index.html"
-    html = static.read_text(encoding="utf-8")
+    with the bot's status vocabulary and error tone (spec §12.2). Pinned
+    against the React source tree (see _spa_source)."""
+    html = _spa_source()
     for s in (
         "Paste a media link to download it.",           # placeholder
         "YouTube &middot; Instagram &middot; Pinterest &middot; TikTok &middot; Spotify",
