@@ -7,6 +7,9 @@ name: WebApp
 on:
   push:
     branches: [main]
+  # Manual re-publish (e.g. after a transient publish failure) — always
+  # rebuilds and force-publishes from the current main.
+  workflow_dispatch:
 
 # Publishing webapp-dist needs a writable token.
 permissions:
