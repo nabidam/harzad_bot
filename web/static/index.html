@@ -3,289 +3,724 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+<meta name="theme-color" content="#0a0d1e" id="meta-theme"/>
 <title>Harzad</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  :root{
-    --bg:#0f0f0f; --card:#1a1a1a; --text:#f5f5f5; --hint:#9a9a9a;
-    --accent:#2481cc; --accent-text:#ffffff; --danger:#ef4444; --ok:#22c55e;
-    --radius:14px;
+/* ==========================================================================
+   Harzad Mini App
+   Brand tokens sampled from assets/logo.png: navy ink #1A1E3D, cream #FBEEDB,
+   electric cyan #3AE3FD (spec §12: the Mini App shares the bot's accent).
+   Icons: Tabler Icons (MIT). Paths are inlined because this is a no-build
+   single-file app served at the registered Mini App origin.
+   Theme: dark by default. Outside Telegram it follows prefers-color-scheme;
+   inside Telegram it follows the user's Telegram surface (themeParams
+   luminance). The palette is the app's own in both cases: we set the
+   Telegram header/background to match, we do not mirror arbitrary theme
+   colors (the old behavior made the app a coat-hanger for user themes).
+   Z-index scale (systemic, do not add ad-hoc values):
+     5  sticky chip bar        30  mini player
+     40  sheet backdrop        50  track sheet
+     60  toast
+   ========================================================================== */
+:root{
+  color-scheme:dark;
+  --page:#05070f;
+  --bg:#0a0d1e;
+  --bg-2:#0e1329;
+  --surface:#141a35;
+  --surface-2:#1c2344;
+  --text:#f2eee3;
+  --text-2:#a7aed0;
+  --text-3:#7c84b0;
+  --line:rgba(167,174,208,.13);
+  --line-2:rgba(167,174,208,.28);
+  --accent:#3ae3fd;
+  --accent-2:#8befff;
+  --on-accent:#051219;
+  --accent-soft:rgba(58,227,253,.12);
+  --accent-ring:rgba(58,227,253,.4);
+  --danger:#ff7d72;
+  --danger-soft:rgba(255,125,114,.13);
+  --danger-ink:#2a0b07;
+  --ok:#4be0a5;
+  --ok-soft:rgba(75,224,165,.15);
+  --scrim:rgba(3,5,14,.66);
+  --shadow-1:0 10px 28px rgba(2,4,12,.5);
+  --shadow-2:0 20px 50px rgba(2,4,12,.6);
+  --r-s:10px;
+  --r-m:14px;
+  --r-l:20px;
+  --ease:cubic-bezier(.32,.72,0,1);
+  --tab-h:58px;
+}
+:root.light{
+  color-scheme:light;
+  --page:#e8eaf2;
+  --bg:#f3f4f9;
+  --bg-2:#fafbfe;
+  --surface:#fdfdff;
+  --surface-2:#edeff7;
+  --text:#151a3d;
+  --text-2:#4c537d;
+  --text-3:#646a90;
+  --line:rgba(21,26,61,.1);
+  --line-2:rgba(21,26,61,.24);
+  --accent:#077490;
+  --accent-2:#0a89ab;
+  --on-accent:#f5feff;
+  --accent-soft:rgba(7,116,144,.1);
+  --accent-ring:rgba(7,116,144,.35);
+  --danger:#c53a30;
+  --danger-soft:rgba(197,58,48,.1);
+  --danger-ink:#fdf1ef;
+  --ok:#0f9d6c;
+  --ok-soft:rgba(15,157,108,.12);
+  --scrim:rgba(21,26,61,.42);
+  --shadow-1:0 10px 28px rgba(21,26,61,.14);
+  --shadow-2:0 20px 50px rgba(21,26,61,.2);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{
+  background:var(--page);color:var(--text);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+button,input{font:inherit;color:inherit;touch-action:manipulation}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.ico{display:block;flex:none}
+
+.app{max-width:480px;margin:0 auto;height:100dvh;display:flex;flex-direction:column;position:relative;background:var(--bg)}
+@media (min-width:520px){
+  .app{border-left:1px solid var(--line);border-right:1px solid var(--line);box-shadow:0 0 80px rgba(0,0,0,.35)}
+}
+
+/* ---- top bar ----------------------------------------------------------- */
+.topbar{
+  flex:none;height:calc(52px + env(safe-area-inset-top));
+  padding:env(safe-area-inset-top) 16px 0;
+  display:flex;align-items:center;justify-content:space-between;
+  background:var(--bg-2);border-bottom:1px solid var(--line);
+}
+.brand{display:flex;align-items:center;gap:9px}
+.brand img{width:27px;height:27px;border-radius:8px;display:block}
+.brand b{font-size:16.5px;font-weight:700;letter-spacing:-.01em}
+.avatar{
+  width:28px;height:28px;border-radius:50%;flex:none;
+  display:grid;place-items:center;
+  background:var(--accent-soft);color:var(--accent);
+  font-size:12px;font-weight:700;
+}
+.avatar .ico{width:15px;height:15px;color:var(--text-3)}
+
+/* ---- main + tabs -------------------------------------------------------- */
+main{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 16px;-webkit-overflow-scrolling:touch}
+.tab{display:none;padding:18px 0 28px}
+.tab.active{display:block;animation:tab-in .22s var(--ease)}
+@keyframes tab-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+body.chat-on main{padding-bottom:0}
+body.chat-on #tab-chat{padding-bottom:96px}
+
+.hero h1{font-size:23px;line-height:1.2;font-weight:700;letter-spacing:-.02em;margin:2px 0 4px}
+.hero p{margin:0 0 16px;font-size:13.5px;color:var(--text-2)}
+
+/* ---- cards / buttons / fields ------------------------------------------ */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:15px;margin-bottom:12px}
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;height:48px;padding:0 16px;border:1px solid transparent;
+  border-radius:var(--r-s);background:var(--surface-2);color:var(--text);
+  font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;user-select:none;
+  transition:transform .12s var(--ease),background .15s,opacity .15s;
+}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.45;pointer-events:none}
+.btn .ico{width:18px;height:18px}
+.btn.primary{background:var(--accent);color:var(--on-accent)}
+.btn.primary:active{background:var(--accent-2)}
+.btn.ghost{background:transparent;border-color:var(--line-2)}
+.btn.ghost.danger{color:var(--danger);border-color:var(--danger)}
+.btn.danger-solid{background:var(--danger);color:var(--danger-ink)}
+.btn .spin{animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.row2 .btn{height:44px;font-size:13.5px}
+.hint{font-size:12px;color:var(--text-3);margin-top:10px}
+.num{font-variant-numeric:tabular-nums}
+
+.urlrow{
+  display:flex;align-items:center;gap:10px;height:52px;padding:0 14px;
+  background:var(--bg);border:1px solid var(--line-2);border-radius:var(--r-s);
+  transition:border-color .15s,box-shadow .15s;
+}
+.urlrow:focus-within{border-color:var(--accent-ring);box-shadow:0 0 0 3px var(--accent-soft)}
+.urlrow .ico{width:19px;height:19px;color:var(--text-3)}
+.urlrow input{flex:1;min-width:0;background:none;border:0;outline:0;font-size:15px}
+.urlrow input::placeholder{color:var(--text-3)}
+.platforms{font-size:12px;color:var(--text-3);margin:10px 2px 12px}
+.form-err{
+  display:flex;align-items:flex-start;gap:8px;margin-top:12px;
+  background:var(--danger-soft);border:1px solid var(--danger);
+  border-radius:var(--r-s);padding:10px 12px;font-size:13px;color:var(--danger);
+}
+.form-err .ico{width:17px;height:17px;margin-top:1px}
+
+/* ---- download task ------------------------------------------------------ */
+.task-row{display:flex;align-items:center;gap:12px}
+.task-ico{
+  width:42px;height:42px;border-radius:12px;flex:none;
+  display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);
+}
+.task-ico .ico{width:21px;height:21px}
+.task-ico.ok{background:var(--ok-soft);color:var(--ok)}
+.task-ico.warn{background:var(--danger-soft);color:var(--danger)}
+.task-body{flex:1;min-width:0}
+.task-label{font-size:14.5px;font-weight:600}
+.task-elapsed{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-3);margin-top:2px}
+.task-elapsed .ico{width:13px;height:13px}
+.bar{height:4px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin-top:14px}
+.bar-fill{
+  display:block;height:100%;width:38%;border-radius:inherit;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  animation:bar-slide 1.25s var(--ease) infinite;
+}
+@keyframes bar-slide{from{transform:translateX(-110%)}to{transform:translateX(380%)}}
+.result-head{display:flex;align-items:flex-start;gap:12px}
+.result-head .task-body .task-label{font-size:15px}
+.result-meta{font-size:12.5px;color:var(--text-3);margin-top:2px;word-break:break-all}
+.result .btn{margin-top:12px}
+
+/* ---- music tab ---------------------------------------------------------- */
+.music-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px}
+.music-head h2{margin:0;font-size:21px;font-weight:700;letter-spacing:-.02em}
+.music-count{font-size:12.5px;color:var(--text-3);text-align:right}
+.chipbar{position:sticky;top:-18px;z-index:5;margin:0 -16px;padding:10px 16px;background:var(--bg)}
+.chips{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;padding:2px}
+.chips::-webkit-scrollbar{display:none}
+.chip{
+  flex:none;border:1px solid var(--line-2);background:var(--surface);color:var(--text-2);
+  border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;user-select:none;
+  transition:background .15s,color .15s,border-color .15s,transform .12s var(--ease);
+}
+.chip:active{transform:scale(.96)}
+.chip.active{background:var(--accent-soft);border-color:var(--accent-ring);color:var(--accent)}
+.chip.back{margin-top:10px;display:inline-flex;align-items:center;gap:6px}
+.chip.back .ico{width:15px;height:15px}
+.chips+.chip{margin-top:10px}
+.searchrow{
+  display:flex;align-items:center;gap:8px;margin-top:12px;
+}
+.searchrow .urlrow{flex:1;height:46px}
+.searchrow .go{
+  flex:none;width:46px;height:46px;border-radius:var(--r-s);border:0;cursor:pointer;
+  background:var(--accent);color:var(--on-accent);display:grid;place-items:center;
+  transition:transform .12s var(--ease),background .15s;
+}
+.searchrow .go:active{transform:scale(.94);background:var(--accent-2)}
+.searchrow .go .ico{width:19px;height:19px}
+.field-err{font-size:12.5px;color:var(--danger);margin:8px 2px 0}
+#day-list{margin-top:12px}
+.dayrow{
+  display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);
+  padding:12px 14px;margin-bottom:8px;cursor:pointer;user-select:none;
+  transition:transform .12s var(--ease),border-color .15s;
+}
+.dayrow:active{transform:scale(.985);border-color:var(--accent-ring)}
+.dayrow .dico{
+  width:36px;height:36px;border-radius:10px;flex:none;
+  display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);
+}
+.dayrow .dico .ico{width:17px;height:17px}
+.dayrow .dl{font-size:14px;font-weight:600}
+.dayrow .ds{font-size:12px;color:var(--text-3);margin-top:1px}
+.dayrow .chev{margin-left:auto;color:var(--text-3)}
+.dayrow .chev .ico{width:18px;height:18px}
+
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px;margin-top:14px}
+.tile{cursor:pointer;user-select:none;transition:transform .12s var(--ease);animation:tile-in .34s var(--ease) both;animation-delay:calc(var(--i,0)*26ms)}
+.tile:active{transform:scale(.96)}
+@keyframes tile-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.coverwrap{position:relative;border-radius:var(--r-m);overflow:hidden;background:var(--surface-2);border:1px solid var(--line)}
+.coverwrap img{width:100%;aspect-ratio:1;object-fit:cover;display:block}
+.letter{
+  width:100%;aspect-ratio:1;display:grid;place-items:center;
+  font-size:28px;font-weight:700;color:var(--accent);
+  background:
+    radial-gradient(120% 120% at 20% 0%,var(--accent-soft) 0%,transparent 55%),
+    var(--surface-2);
+}
+.dur{
+  position:absolute;right:6px;bottom:6px;
+  background:rgba(5,8,20,.72);color:#fff;
+  font-size:10.5px;font-weight:600;border-radius:6px;padding:1.5px 5px;
+  font-variant-numeric:tabular-nums;
+}
+.tile .tt{margin-top:7px;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .ta{font-size:11.5px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+#load-more{margin-top:14px}
+
+/* skeleton */
+.skel{pointer-events:none}
+.skel .sk-cover{border-radius:var(--r-m);aspect-ratio:1;margin-bottom:8px}
+.skel .sk-l1{height:11px;width:82%;border-radius:5px;margin-bottom:6px}
+.skel .sk-l2{height:9px;width:58%;border-radius:5px}
+.sk{
+  background:linear-gradient(100deg,var(--surface) 40%,var(--surface-2) 50%,var(--surface) 60%);
+  background-size:200% 100%;animation:shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer{from{background-position:120% 0}to{background-position:-80% 0}}
+
+/* empty / error state boxes */
+.statebox{padding:44px 20px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.state-ico{
+  width:52px;height:52px;border-radius:16px;margin-bottom:12px;
+  display:grid;place-items:center;
+}
+.state-ico .ico{width:25px;height:25px}
+.state-ico.soft{background:var(--accent-soft);color:var(--accent)}
+.state-ico.warn{background:var(--danger-soft);color:var(--danger)}
+.state-t{font-size:15px;font-weight:600;margin-bottom:4px}
+.state-d{font-size:13px;color:var(--text-2);max-width:270px}
+.statebox .btn{max-width:180px;margin-top:14px;height:44px}
+
+/* ---- track sheet -------------------------------------------------------- */
+.sheet-backdrop{position:fixed;inset:0;z-index:40;background:var(--scrim);opacity:0;transition:opacity .24s}
+.sheet-backdrop.open{opacity:1}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  max-width:480px;margin:0 auto;
+  background:var(--surface);border:1px solid var(--line);border-bottom:0;
+  border-radius:var(--r-l) var(--r-l) 0 0;
+  padding:10px 18px calc(16px + env(safe-area-inset-bottom));
+  transform:translateY(105%);transition:transform .3s var(--ease);
+  max-height:88dvh;overflow-y:auto;box-shadow:var(--shadow-2);
+}
+.sheet.open{transform:none}
+.grab{width:36px;height:4px;border-radius:99px;background:var(--line-2);margin:2px auto 12px}
+.sheet-x{
+  position:absolute;top:14px;right:14px;width:32px;height:32px;border-radius:50%;
+  border:0;background:var(--surface-2);color:var(--text-2);cursor:pointer;
+  display:grid;place-items:center;
+}
+.sheet-x .ico{width:16px;height:16px}
+.sheet-head{display:flex;gap:14px;align-items:center;padding-right:36px}
+.sheet-cover{width:72px;height:72px;border-radius:12px;overflow:hidden;flex:none;border:1px solid var(--line)}
+.sheet-cover .letter{font-size:28px}
+.twrap{flex:1;min-width:0}
+#sheet-title{margin:0;font-size:16px;font-weight:700;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#sheet-artist{font-size:13px;color:var(--text-2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sheet-album{font-size:12px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin:16px 0 4px}
+.stat b{display:block;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:2px}
+.stat span{font-size:13px;font-weight:600}
+.minirow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+.minirow .btn{height:44px;font-size:12.5px;padding:0 6px}
+.minirow .btn .ico{width:16px;height:16px}
+#sheet-resend{margin-top:14px}
+.sheet-confirm{margin-top:14px}
+.sheet-confirm p{margin:0 0 10px;font-size:13.5px;color:var(--text-2);line-height:1.45}
+.sheet-confirm .minirow{margin-top:0;grid-template-columns:1fr 1fr}
+.sheet-status{
+  display:flex;align-items:flex-start;gap:8px;margin-top:12px;
+  font-size:13px;color:var(--text-2);min-height:0;
+}
+.sheet-status .ico{width:16px;height:16px;margin-top:1.5px}
+.sheet-status.done{color:var(--ok)}
+.sheet-status.done .ico{color:var(--ok)}
+.sheet-status.error{color:var(--danger)}
+.sheet-status.error .ico{color:var(--danger)}
+.sheet-status.busy .ico{color:var(--accent);animation:spin .9s linear infinite}
+
+/* ---- mini player -------------------------------------------------------- */
+.playerbar{
+  position:absolute;left:12px;right:12px;z-index:30;
+  bottom:calc(var(--tab-h) + env(safe-area-inset-bottom) + 10px);
+  display:flex;align-items:center;gap:11px;
+  background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-m);
+  padding:9px 10px 9px 12px;box-shadow:var(--shadow-1);
+  animation:tab-in .22s var(--ease);
+}
+body.chat-on .playerbar{bottom:calc(var(--tab-h) + env(safe-area-inset-bottom) + 80px)}
+.pb-cover{width:36px;height:36px;border-radius:9px;overflow:hidden;flex:none;border:1px solid var(--line);background:var(--surface-2);display:grid;place-items:center;color:var(--accent)}
+.pb-cover .ico{width:17px;height:17px}
+.pb-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.pb-body{flex:1;min-width:0}
+.pb-title{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-sub{font-size:11px;color:var(--text-3);margin-top:1px}
+.pb-btn{
+  flex:none;width:38px;height:38px;border-radius:50%;border:0;cursor:pointer;
+  background:var(--accent);color:var(--on-accent);display:grid;place-items:center;
+  transition:transform .12s var(--ease);
+}
+.pb-btn:active{transform:scale(.92)}
+.pb-btn .ico{width:18px;height:18px}
+
+/* ---- chat tab ----------------------------------------------------------- */
+.msgs{display:flex;flex-direction:column;gap:9px;padding-top:4px}
+.msg{
+  max-width:80%;padding:10px 13px;border-radius:16px;
+  font-size:14.5px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word;
+  animation:tab-in .2s var(--ease);
+}
+.msg.user{align-self:flex-end;background:var(--accent);color:var(--on-accent);font-weight:500;border-bottom-right-radius:5px}
+.msg.bot{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:5px}
+.typing{display:inline-flex;gap:4px;align-items:center;padding:2px 0}
+.typing i{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.45;animation:blink 1s infinite}
+.typing i:nth-child(2){animation-delay:.16s}
+.typing i:nth-child(3){animation-delay:.32s}
+@keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:.9;transform:translateY(-2px)}}
+.composer{
+  position:absolute;left:0;right:0;z-index:20;
+  bottom:calc(var(--tab-h) + env(safe-area-inset-bottom));
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  background:var(--bg-2);border-top:1px solid var(--line);
+  display:flex;align-items:center;gap:9px;
+}
+.composer input{
+  flex:1;min-width:0;height:46px;border-radius:999px;
+  background:var(--surface-2);border:1px solid transparent;outline:0;
+  padding:0 16px;font-size:15px;
+  transition:border-color .15s,box-shadow .15s;
+}
+.composer input:focus{border-color:var(--accent-ring);box-shadow:0 0 0 3px var(--accent-soft)}
+.composer input::placeholder{color:var(--text-3)}
+.composer .send{
+  flex:none;width:46px;height:46px;border-radius:50%;border:0;cursor:pointer;
+  background:var(--accent);color:var(--on-accent);display:grid;place-items:center;
+  transition:transform .12s var(--ease),opacity .15s;
+}
+.composer .send:active{transform:scale(.92)}
+.composer .send:disabled{opacity:.45;pointer-events:none}
+.composer .send .ico{width:19px;height:19px}
+
+/* ---- tab bar ------------------------------------------------------------ */
+.tabbar{
+  flex:none;display:grid;grid-template-columns:repeat(3,1fr);
+  background:var(--bg-2);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.tabbar button{
+  position:relative;background:none;border:0;cursor:pointer;
+  color:var(--text-3);padding:10px 0 9px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  font-size:11px;font-weight:600;user-select:none;
+  transition:color .18s;
+}
+.tabbar button:active{transform:scale(.97)}
+.tabbar .nav-ico{height:23px;display:grid;place-items:center}
+.tabbar .nav-ico .ico{width:23px;height:23px}
+.tabbar button.active{color:var(--accent)}
+.tabbar button.active::before{
+  content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:20px;height:3px;border-radius:0 0 3px 3px;background:var(--accent);
+}
+
+/* ---- toast --------------------------------------------------------------- */
+.toast{
+  position:fixed;left:50%;z-index:60;
+  bottom:calc(var(--tab-h) + env(safe-area-inset-bottom) + 14px);
+  transform:translate(-50%,8px);
+  max-width:min(88vw,420px);
+  background:var(--surface-2);border:1px solid var(--line-2);color:var(--text);
+  font-size:13px;border-radius:12px;padding:10px 15px;box-shadow:var(--shadow-1);
+  opacity:0;pointer-events:none;transition:opacity .2s,transform .2s var(--ease);
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
   }
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;height:100%}
-  body{
-    background:var(--bg);color:var(--text);
-    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    display:flex;flex-direction:column;height:100dvh;overflow:hidden;
-    padding-top:env(safe-area-inset-top);
-  }
-  header{display:flex;align-items:baseline;justify-content:space-between;padding:14px 16px 6px}
-  header h1{font-size:17px;margin:0;font-weight:700}
-  header .user{color:var(--hint);font-size:13px}
-  main{flex:1;overflow-y:auto;padding:8px 16px 16px;-webkit-overflow-scrolling:touch}
-  section{display:none}
-  section.active{display:block}
-  .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px}
-  label{font-size:13px;color:var(--hint);display:block;margin-bottom:6px}
-  input[type=text]{
-    width:100%;background:var(--bg);border:1px solid rgba(128,128,128,.25);
-    color:var(--text);border-radius:10px;padding:12px;font-size:15px;outline:none;
-  }
-  input[type=text]:focus{border-color:var(--accent)}
-  .btn{
-    width:100%;margin-top:10px;background:var(--accent);color:var(--accent-text);
-    border:0;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;
-    display:block;text-decoration:none;text-align:center;
-  }
-  .btn:disabled{opacity:.5}
-  .btn.secondary{background:transparent;border:1px solid rgba(128,128,128,.35);color:var(--text)}
-  #status{font-size:14px;color:var(--hint);margin-top:10px;min-height:1.2em}
-  #status.error{color:var(--danger)}
-  #status.done{color:var(--ok)}
-  .spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--hint);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:7px}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .meta{font-size:13px;color:var(--hint);margin-top:4px;word-break:break-all}
-  .hint{font-size:12px;color:var(--hint);margin-top:10px}
-  /* chat */
-  #messages{display:flex;flex-direction:column;gap:8px;min-height:50vh}
-  .msg{max-width:85%;padding:9px 12px;border-radius:14px;font-size:15px;white-space:pre-wrap;word-wrap:break-word}
-  .msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-text);border-bottom-right-radius:4px}
-  .msg.bot{align-self:flex-start;background:var(--card);border-bottom-left-radius:4px}
-  .chatbar{display:none;gap:8px;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
-  .chatbar input{flex:1}
-  .chatbar .btn{width:48px;min-width:48px;margin:0;padding:0;font-size:17px;border-radius:10px;flex:none}
-  nav{display:flex;border-top:1px solid rgba(128,128,128,.2);padding-bottom:env(safe-area-inset-bottom)}
-  nav button{
-    flex:1;background:none;border:0;color:var(--hint);padding:10px 0 8px;
-    font-size:12px;font-weight:600;cursor:pointer;display:flex;flex-direction:column;gap:3px;align-items:center;
-  }
-  nav button .ico{font-size:20px;line-height:1}
-  nav button.active{color:var(--accent)}
-  /* music tab */
-  .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:none}
-  .chips::-webkit-scrollbar{display:none}
-  .chip{
-    flex:none;background:var(--card);color:var(--hint);border:1px solid rgba(128,128,128,.25);
-    border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;
-  }
-  .chip.active{background:var(--accent);border-color:var(--accent);color:var(--accent-text)}
-  #day-back{display:none;margin:0 0 6px}
-  #search-box{display:none;gap:8px;margin-bottom:4px}
-  #search-box input{flex:1;margin:0}
-  #search-box .btn{width:auto;flex:none;margin:0;padding:10px 14px}
-  #search-err{font-size:13px;color:var(--danger);margin:2px 2px 8px;min-height:1.1em}
-  .count-line{font-size:13px;color:var(--hint);margin:2px 2px 10px}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  .tile{background:var(--card);border-radius:12px;overflow:hidden;cursor:pointer;position:relative}
-  .tile .cover{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:rgba(128,128,128,.15)}
-  .tile .ph, .sheet-head .ph{
-    width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;
-    font-size:30px;color:var(--hint);background:rgba(128,128,128,.12);
-  }
-  .sheet-head .ph{width:84px;height:84px;aspect-ratio:1;border-radius:10px;font-size:34px}
-  .tile .dur{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.65);color:#fff;font-size:10px;border-radius:6px;padding:1px 5px}
-  .tile .tt{font-size:12px;font-weight:600;padding:7px 8px 1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tile .ta{font-size:11px;color:var(--hint);padding:0 8px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .dayrow{display:flex;align-items:center;justify-content:space-between;background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:8px;cursor:pointer}
-  .dayrow .dl{font-weight:600;font-size:14px}
-  .dayrow .dr{display:flex;align-items:center;color:var(--hint);font-size:13px}
-  .dayrow .chev{margin-left:8px;font-size:16px}
-  .statebox{display:none;padding:36px 16px;text-align:center;color:var(--hint);font-size:14px}
-  .statebox .big{font-size:34px;margin-bottom:10px}
-  .statebox .t{color:var(--text);font-weight:600;font-size:15px;margin-bottom:6px}
-  .statebox .btn{max-width:180px;margin:14px auto 0}
-  /* track sheet */
-  #sheet-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40}
-  #sheet{
-    position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--card);
-    border-radius:18px 18px 0 0;padding:16px 16px calc(14px + env(safe-area-inset-bottom));
-    transform:translateY(105%);transition:transform .22s ease-out;max-height:86dvh;overflow-y:auto;
-  }
-  #sheet.open{transform:translateY(0)}
-  .sheet-head{display:flex;gap:14px;align-items:center;margin-bottom:10px}
-  .sheet-head .cover{width:84px;height:84px;border-radius:10px;object-fit:cover;flex:none;background:rgba(128,128,128,.15)}
-  .sheet-head .twrap{flex:1;min-width:0}
-  #sheet-title{font-size:16px;font-weight:700;margin:0}
-  #sheet-artist{color:var(--hint);font-size:13px;margin-top:2px}
-  #sheet-album{color:var(--hint);font-size:12px;margin-top:2px}
-  #sheet-meta{font-size:12px;color:var(--hint);margin:8px 0 2px}
-  .sheet-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
-  .sheet-actions .btn{margin:0;padding:11px;font-size:14px}
-  .btn.danger{background:transparent;border:1px solid var(--danger);color:var(--danger)}
-  #sheet-confirm-text{grid-column:1 / -1;font-size:14px}
-  #sheet-status{font-size:13px;margin-top:10px;min-height:1.2em;color:var(--hint)}
-  #sheet-status.error{color:var(--danger)}
-  #sheet-status.done{color:var(--ok)}
-  /* 30s preview player bar */
-  #playerbar{
-    position:fixed;left:12px;right:12px;bottom:calc(54px + env(safe-area-inset-bottom));z-index:60;
-    display:none;align-items:center;gap:10px;background:var(--accent);color:var(--accent-text);
-    border-radius:12px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.35);
-  }
-  #playerbar .pt{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #playerbar button{background:none;border:0;color:inherit;font-size:15px;cursor:pointer;padding:0}
-  .toast{
-    position:fixed;left:50%;transform:translateX(-50%);bottom:calc(100px + env(safe-area-inset-bottom));
-    z-index:70;background:rgba(0,0,0,.82);color:#fff;font-size:13px;border-radius:10px;
-    padding:9px 14px;max-width:88vw;opacity:0;pointer-events:none;transition:opacity .2s;
-  }
-  .toast.show{opacity:1}
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>Harzad</h1>
-  <div class="user" id="user-name"></div>
-</header>
+<div class="app">
 
-<main>
-  <section id="tab-download" class="active">
-    <div class="card">
-      <label for="url">Media link</label>
-      <input type="text" id="url" placeholder="Paste a media link to download it." autocomplete="off" spellcheck="false"/>
-      <div class="hint">YouTube &middot; Instagram &middot; Pinterest &middot; TikTok &middot; Spotify</div>
-      <button class="btn" id="dl-btn">Download</button>
-      <div id="status"></div>
-      <button class="btn secondary" id="retry-btn" style="display:none">Try again</button>
-      <div class="hint" id="mode-hint" style="display:none">Browser mode &mdash; open the app from the Telegram menu button for chat delivery and the native save popup.</div>
+  <header class="topbar">
+    <div class="brand">
+      <img id="brand-logo" alt="" width="27" height="27"/>
+      <b>Harzad</b>
     </div>
-    <div class="card" id="result" style="display:none">
-      <div style="font-weight:600" id="result-title"></div>
-      <div class="meta" id="result-meta"></div>
-      <button class="btn" id="save-btn">Save to device</button>
-      <a class="btn secondary" id="open-link" target="_blank" rel="noopener">Download via link</a>
-      <a class="btn secondary" id="open-chat" href="https://t.me/harzad_bot">Open in chat</a>
-      <div class="hint" id="result-hint">A copy is also sent to your chat with the bot.</div>
-    </div>
-  </section>
+    <div class="avatar" id="user-avatar" title="Not signed in"><span class="av-txt"></span></div>
+  </header>
 
-  <section id="tab-chat">
-    <div id="messages"></div>
-  </section>
+  <main id="main">
 
-  <section id="tab-music">
-    <div class="chips" id="music-chips">
-      <button class="chip active" data-view="latest">Latest</button>
-      <button class="chip" data-view="daily">Daily</button>
-      <button class="chip" data-view="search">Search</button>
-      <button class="chip" data-view="often">Often</button>
-      <button class="chip" data-view="browse">Browse</button>
-    </div>
-    <div class="chips" id="music-sorts" style="display:none">
-      <button class="chip active" data-sort="recent">Recently requested</button>
-      <button class="chip" data-sort="added">Recently added</button>
-      <button class="chip" data-sort="az">Title A&#8211;Z</button>
-    </div>
-    <div id="search-box">
-      <input type="text" id="search-input" placeholder="Track title or artist&hellip;" autocomplete="off" spellcheck="false"/>
-      <button class="btn" id="search-btn">Search</button>
-    </div>
-    <div id="search-err"></div>
-    <button class="chip" id="day-back">&#9664; All days</button>
-    <div id="day-list"></div>
-    <div id="music-count" class="count-line"></div>
-    <div id="track-grid" class="grid"></div>
-    <button class="btn secondary" id="load-more" style="display:none">Load more</button>
-    <div id="music-state" class="statebox"></div>
-    <div class="hint" id="music-browser-note" style="display:none">Open the app from Telegram to see your library.</div>
-  </section>
-</main>
+    <!-- ============================ DOWNLOAD ============================ -->
+    <section id="tab-download" class="tab active">
+      <div class="hero">
+        <h1 id="greet">Hi there</h1>
+        <p>Paste a link to grab media, or open your saved tracks.</p>
+      </div>
 
-<div class="chatbar" id="chatbar">
-  <input type="text" id="chat-input" placeholder="Message Harzad&hellip;" autocomplete="off"/>
-  <button class="btn" id="send-btn">&#10148;</button>
+      <div class="card" id="result" hidden>
+        <div class="result-head">
+          <span class="task-ico ok" id="result-ico"></span>
+          <div class="task-body">
+            <div class="task-label" id="result-title"></div>
+            <div class="task-label result-meta num" id="result-meta"></div>
+          </div>
+        </div>
+        <button class="btn primary" id="save-btn"></button>
+        <div class="row2">
+          <a class="btn ghost" id="open-link" target="_blank" rel="noopener"></a>
+          <button class="btn ghost" id="open-chat"></button>
+        </div>
+        <div class="hint" id="result-hint"></div>
+      </div>
+
+      <div class="card" id="taskcard" hidden>
+        <div class="task-row">
+          <span class="task-ico" id="task-ico"></span>
+          <div class="task-body">
+            <div class="task-label" id="task-label">Checking link…</div>
+            <div class="task-elapsed num" id="task-elapsed" hidden>
+              <span id="task-elapsed-ico"></span>
+              <span id="task-sec"></span>&nbsp;elapsed
+            </div>
+          </div>
+        </div>
+        <div class="bar" aria-hidden="true"><span class="bar-fill"></span></div>
+      </div>
+
+      <div class="card">
+        <div class="urlrow">
+          <span id="url-ico"></span>
+          <input type="text" id="url" placeholder="Paste a media link to download it."
+                 inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"/>
+        </div>
+        <div class="platforms">YouTube &middot; Instagram &middot; Pinterest &middot; TikTok &middot; Spotify</div>
+        <button class="btn primary" id="dl-btn">Download</button>
+        <div class="form-err" id="dl-err" hidden>
+          <span id="dl-err-ico"></span>
+          <span id="dl-err-text"></span>
+        </div>
+        <button class="btn ghost" id="retry-btn" style="margin-top:8px" hidden>Try again</button>
+        <div class="hint" id="mode-hint" hidden>Browser mode. Open the app from the Telegram menu button for chat delivery and the native save popup.</div>
+      </div>
+    </section>
+
+    <!-- ============================= MUSIC ============================== -->
+    <section id="tab-music" class="tab">
+      <div class="music-head">
+        <h2>My music</h2>
+        <div class="music-count num" id="music-count"></div>
+      </div>
+
+      <div class="chipbar">
+        <div class="chips" id="music-chips" role="group" aria-label="Library views">
+          <button class="chip active" data-view="latest" aria-pressed="true">Latest</button>
+          <button class="chip" aria-pressed="false" data-view="daily">Daily</button>
+          <button class="chip" data-view="search" aria-pressed="false">Search</button>
+          <button class="chip" data-view="often" aria-pressed="false">Often</button>
+          <button class="chip" data-view="browse" aria-pressed="false">Browse</button>
+        </div>
+        <div class="chips" id="music-sorts" role="group" aria-label="Browse order" hidden>
+          <button class="chip active" data-sort="recent" aria-pressed="true">Recently requested</button>
+          <button class="chip" data-sort="added" aria-pressed="false">Recently added</button>
+          <button class="chip" data-sort="az" aria-pressed="false">Title A-Z</button>
+        </div>
+        <form class="searchrow" id="search-box" hidden>
+          <div class="urlrow">
+            <span id="search-ico"></span>
+            <input type="text" id="search-input" placeholder="Track title or artist…"
+                   autocomplete="off" autocapitalize="off" spellcheck="false"/>
+          </div>
+          <button class="go" type="submit" aria-label="Search"><span id="go-ico"></span></button>
+        </form>
+      </div>
+
+      <div class="field-err" id="search-err" hidden></div>
+      <button class="chip back" id="day-back" hidden></button>
+
+      <div id="day-list"></div>
+      <div id="track-grid" class="grid"></div>
+      <button class="btn ghost" id="load-more" hidden></button>
+      <div class="statebox" id="music-state" hidden></div>
+    </section>
+
+    <!-- ============================= CHAT =============================== -->
+    <section id="tab-chat" class="tab">
+      <div id="messages" class="msgs"></div>
+    </section>
+
+  </main>
+
+  <!-- chat composer (chat tab only) -->
+  <div class="composer" id="composer" hidden>
+    <form id="chat-form" style="display:flex;align-items:center;gap:9px;flex:1">
+      <input type="text" id="chat-input" placeholder="Message Harzad…" autocomplete="off"/>
+      <button class="send" type="submit" aria-label="Send" id="send-btn"></button>
+    </form>
+  </div>
+
+  <!-- 30s preview mini player -->
+  <div class="playerbar" id="playerbar" hidden>
+    <div class="pb-cover" id="pb-cover"></div>
+    <div class="pb-body">
+      <div class="pb-title" id="player-title"></div>
+      <div class="pb-sub">30s preview</div>
+    </div>
+    <button class="pb-btn" id="player-toggle" aria-label="Pause"></button>
+  </div>
+
+  <nav class="tabbar" aria-label="Tabs">
+    <button data-tab="download" class="active" aria-label="Download">
+      <span class="nav-ico" data-ico="cloud-download"></span>Download
+    </button>
+    <button data-tab="music" aria-label="My music">
+      <span class="nav-ico" data-ico="music"></span>My music</button>
+    <button data-tab="chat" aria-label="Chat">
+      <span class="nav-ico" data-ico="message"></span>Chat
+    </button>
+  </nav>
+
 </div>
 
-<nav>
-  <button data-tab="download" class="active"><span class="ico">&#11015;&#65039;</span>Download</button>
-  <button data-tab="music"><span class="ico">&#127925;</span>My music</button>
-  <button data-tab="chat"><span class="ico">&#128172;</span>Chat</button>
-</nav>
-
-<div id="sheet-backdrop"></div>
-<div id="sheet">
+<!-- track sheet -->
+<div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+  <div class="grab" aria-hidden="true"></div>
+  <button class="sheet-x" id="sheet-x" aria-label="Close"></button>
   <div class="sheet-head">
-    <div id="sheet-coverwrap"></div>
+    <div class="sheet-cover" id="sheet-coverwrap"></div>
     <div class="twrap">
-      <div id="sheet-title"></div>
+      <h3 id="sheet-title"></h3>
       <div id="sheet-artist"></div>
-      <div id="sheet-album"></div>
+      <div id="sheet-album" hidden></div>
     </div>
   </div>
-  <div id="sheet-meta"></div>
-  <div class="sheet-actions" id="sheet-actions">
-    <button class="btn" id="sheet-resend">&#9654; Get again</button>
-    <button class="btn secondary" id="sheet-preview">&#127911; 30s preview</button>
-    <a class="btn secondary" id="sheet-spotify" target="_blank" rel="noopener">&#127925; Open on Spotify</a>
-    <button class="btn danger" id="sheet-remove">&#128465; Remove</button>
+  <div class="stats" id="sheet-meta"></div>
+  <div id="sheet-actions">
+    <button class="btn primary" id="sheet-resend"></button>
+    <div class="minirow">
+      <button class="btn ghost" id="sheet-preview"></button>
+      <a class="btn ghost" id="sheet-spotify" target="_blank" rel="noopener"></a>
+      <button class="btn ghost danger" id="sheet-remove"></button>
+    </div>
   </div>
-  <div class="sheet-actions" id="sheet-confirm" style="display:none">
-    <div id="sheet-confirm-text"></div>
-    <button class="btn danger" id="sheet-rm-yes">&#128465; Yes, remove</button>
-    <button class="btn secondary" id="sheet-rm-keep">&#9664; Keep track</button>
+  <div class="sheet-confirm" id="sheet-confirm" hidden>
+    <p id="sheet-confirm-text"></p>
+    <div class="minirow">
+      <button class="btn danger-solid" id="sheet-rm-yes"></button>
+      <button class="btn ghost" id="sheet-rm-keep">Keep track</button>
+    </div>
   </div>
-  <div id="sheet-status"></div>
-  <button class="btn secondary" id="sheet-close">Close</button>
+  <div class="sheet-status" id="sheet-status" hidden></div>
 </div>
 
-<div id="playerbar">
-  <span class="pt" id="player-title"></span>
-  <button id="player-stop" title="Stop">&#9632;</button>
-</div>
-
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 "use strict";
-// Runs inside Telegram's WebView and in a plain browser (preview mode).
-// Outside Telegram the SDK script may be missing entirely, so every tg
-// access is guarded.
+/* ==========================================================================
+   Runs inside Telegram's WebView and in a plain browser (preview mode).
+   Outside Telegram the SDK script may be missing entirely, so every tg
+   access is guarded.
+   ========================================================================== */
 const tg = (window.Telegram && window.Telegram.WebApp) || null;
 const inTG = !!(tg && tg.initData && tg.initData.length);
-if (tg) {
-  try {
-    tg.ready();
-    tg.expand();
-    if (tg.setHeaderColor) tg.setHeaderColor(tg.themeParams && tg.themeParams.bg_color || "#0f0f0f");
-    if (tg.setBackgroundColor) tg.setBackgroundColor(tg.themeParams && tg.themeParams.bg_color || "#0f0f0f");
-  } catch (e) {}
+
+// ---- theme ---------------------------------------------------------------
+// Brand palette in both modes; detect the user's surface only (see header).
+function detectDark(){
+  if (inTG && tg.themeParams && typeof tg.themeParams.bg_color === "string") {
+    const m = tg.themeParams.bg_color.match(/#?([0-9a-f]{6})/i);
+    if (m) {
+      const n = parseInt(m[1], 16);
+      const lum = (0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255;
+      return lum < 0.5;
+    }
+  }
+  return matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function applyTheme(){
+  const dark = detectDark();
+  document.documentElement.classList.toggle("light", !dark);
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  const meta = $("meta-theme");
+  if (meta) meta.setAttribute("content", bg);
+  if (tg && tg.setHeaderColor) {
+    try { tg.setHeaderColor(bg); tg.setBackgroundColor(bg); } catch (e) {}
+  }
+}
+function bootTg(){
+  if (tg) {
+    try {
+      tg.ready();
+      tg.expand();
+    } catch (e) {}
+  }
+  applyTheme();
+  if (tg) tg.onEvent("themeChanged", applyTheme);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (!inTG) applyTheme();
+  });
 }
 
-function applyTheme(){
-  if (!tg) return;
-  const t = tg.themeParams || {};
-  const s = document.documentElement.style;
-  const set = (k, v) => { if (v) s.setProperty(k, v); };
-  set("--bg", t.bg_color);
-  set("--card", t.secondary_bg_color);
-  set("--text", t.text_color);
-  set("--hint", t.hint_color);
-  set("--accent", t.button_color);
-  set("--accent-text", t.button_text_color);
+// ---- icons (Tabler Icons, MIT; inlined for the no-build single file) -----
+const SVGNS = "http://www.w3.org/2000/svg";
+const ICONS = {
+  "music": ["M3 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0","M13 17a3 3 0 1 0 6 0a3 3 0 0 0 -6 0","M9 17v-13h10v13","M9 8h10"],
+  "circle-check": ["M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0","M9 12l2 2l4 -4"],
+  "external-link": ["M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6","M11 13l9 -9","M15 4h5v5"],
+  "refresh": ["M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4","M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"],
+  "clock": ["M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0","M12 7v5l3 3"],
+  "lock": ["M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6","M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0","M8 11v-4a4 4 0 1 1 8 0v4"],
+  "player-pause": ["M6 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12","M14 6a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1l0 -12"],
+  "player-play": ["M7 4v16l13 -8l-13 -8"],
+  "chevron-right": ["M9 6l6 6l-6 6"],
+  "chevron-left": ["M15 6l-6 6l6 6"],
+  "link": ["M9 15l6 -6","M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464","M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463"],
+  "x": ["M18 6l-12 12","M6 6l12 12"],
+  "loader-2": ["M12 3a9 9 0 1 0 9 9"],
+  "trash": ["M4 7l16 0","M10 11l0 6","M14 11l0 6","M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12","M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"],
+  "search": ["M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0","M21 21l-6 -6"],
+  "calendar": ["M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12","M16 3v4","M8 3v4","M4 11h16"],
+  "send": ["M10 14l11 -11","M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5"],
+  "alert-circle": ["M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0","M12 8v4","M12 16h.01"],
+  "cloud-off": ["M9.58 5.548c.24 -.11 .492 -.207 .752 -.286c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 .957 -.383 1.824 -1.003 2.454m-2.997 1.033h-11.343c-2.572 -.004 -4.657 -2.011 -4.657 -4.487c0 -2.475 2.085 -4.482 4.657 -4.482c.13 -.582 .37 -1.128 .7 -1.62","M3 3l18 18"],
+  "download": ["M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2","M7 11l5 5l5 -5","M12 4l0 12"],
+  "cloud-download": ["M19 18a3.5 3.5 0 0 0 0 -7h-1a5 4.5 0 0 0 -11 -2a4.6 4.4 0 0 0 -2.1 8.4","M12 13l0 9","M9 19l3 3l3 -3"],
+  "message": ["M8 9h8","M8 13h6","M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12"]
+};
+function icon(name){
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("ico");
+  (ICONS[name] || []).forEach((d) => {
+    const p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", d);
+    svg.appendChild(p);
+  });
+  return svg;
 }
-applyTheme();
-if (tg) tg.onEvent("themeChanged", applyTheme);
+function mountIcon(holder, name, cls){
+  holder.innerHTML = "";
+  const s = icon(name);
+  if (cls) s.classList.add(cls);
+  holder.appendChild(s);
+  return s;
+}
 
 const $ = (id) => document.getElementById(id);
-const state = { user: null, currentJob: null, messages: [] };
+const state = { user: null, currentJob: null, result: null, messages: [] };
+let jobStart = 0;
+let elapsedTimer = null;
 
-// ---- tabs ----
-const TABS = ["download", "music", "chat"];
-document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => {
-  document.querySelectorAll("nav button").forEach((x) => x.classList.remove("active"));
-  b.classList.add("active");
-  const tab = b.dataset.tab;
-  TABS.forEach((t) => $("tab-" + t).classList.toggle("active", t === tab));
-  $("chatbar").style.display = tab === "chat" ? "flex" : "none";
-  if (tab === "chat" && state.messages.length === 0) {
-    // Same wording as the bot's AI chat screen (spec §9/§12.2): no
-    // conversation memory, so each message stands on its own.
-    addMsg("bot", "Ask me a question. I answer each message independently for now, so include any context I need in each message.");
-  }
-  if (tab === "music") enterMusic();
-}));
-
-// ---- api helper ----
+// ---- api + haptics + toast -----------------------------------------------
 async function api(path, body){
   const res = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -297,30 +732,70 @@ async function api(path, body){
   if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
   return data;
 }
-
 function haptic(kind){
   try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(kind); } catch (e) {}
 }
+let toastTimer = null;
+function toast(msg, ms){
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), ms || 2600);
+}
+function esc(s){
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
+}
 
-// ---- auth ----
+// ---- tabs ------------------------------------------------------------------
+function setTab(tab){
+  document.querySelectorAll(".tabbar button").forEach((x) =>
+    x.classList.toggle("active", x.dataset.tab === tab));
+  document.querySelectorAll(".tab").forEach((s) =>
+    s.classList.toggle("active", s.id === "tab-" + tab));
+  $("composer").hidden = tab !== "chat";
+  document.body.classList.toggle("chat-on", tab === "chat");
+  $("main").scrollTop = 0;
+  if (tab === "chat" && state.messages.length === 0) {
+    // Same wording as the bot's AI chat screen (spec §9/§12.2): no
+    // conversation memory, so each message stands on its own.
+    addMsg("bot", "Ask me a question. I answer each message independently for now, so include any context I need in each message.");
+  }
+  if (tab === "music") enterMusic();
+}
+document.querySelectorAll(".tabbar button").forEach((b) =>
+  b.addEventListener("click", () => setTab(b.dataset.tab)));
+
+// ---- auth ------------------------------------------------------------------
+function renderUser(){
+  const av = $("user-avatar");
+  const txt = av.querySelector(".av-txt");
+  if (state.user) {
+    const first = state.user.first_name || "";
+    $("greet").textContent = "Hi, " + first;
+    txt.textContent = (first[0] || "?").toUpperCase();
+    av.title = [state.user.first_name, state.user.last_name].filter(Boolean).join(" ");
+  } else {
+    $("greet").textContent = "Hi there";
+    txt.textContent = "";
+    av.title = "Browser mode";
+    mountIcon(av, "cloud-off");
+    $("mode-hint").hidden = false;
+  }
+}
 async function boot(){
   try {
     const data = await api("/api/auth", { initData: inTG ? tg.initData : "" });
-    if (data.user) {
-      state.user = data.user;
-      $("user-name").textContent =
-        [state.user.first_name, state.user.last_name].filter(Boolean).join(" ") || "";
-    } else {
-      $("user-name").textContent = "browser mode";
-      $("mode-hint").style.display = "block";
-    }
+    state.user = data.user || null;
   } catch (e) {
-    $("user-name").textContent = "not signed in";
+    state.user = null;
   }
+  renderUser();
 }
-boot();
 
-// ---- download tab ----
+// ---- download tab ----------------------------------------------------------
 // State labels share the bot's status vocabulary (spec §12/§12.2).
 const STATE_LABEL = {
   starting: "Checking link…",
@@ -334,32 +809,59 @@ const COPY = {
   expired: "This download link may have expired. Generate a new one to continue.",
 };
 
-function busyStatus(text){
-  $("status").className = "";
-  $("status").innerHTML = text ? '<span class="spinner"></span>' + text : "";
+function fmtElapsed(s){
+  if (s < 60) return s + "s";
+  return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
 }
-function plainStatus(text, cls){
-  const el = $("status");
-  el.className = cls || "";
-  el.textContent = text || "";
+// Elapsed time is measured client-side from job creation and only shown
+// after 5 seconds (spec §4.1: show measured elapsed time, never simulate).
+function startElapsed(){
+  jobStart = Date.now();
+  clearInterval(elapsedTimer);
+  $("task-elapsed").hidden = true;
+  elapsedTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - jobStart) / 1000);
+    if (s >= 5) {
+      $("task-elapsed").hidden = false;
+      $("task-sec").textContent = fmtElapsed(s);
+    }
+  }, 1000);
+}
+function stopElapsed(){ clearInterval(elapsedTimer); }
+
+function setBusy(on, label){
+  $("taskcard").hidden = !on;
+  if (on && label) $("task-label").textContent = label;
+  $("url").disabled = on;
+  $("dl-btn").disabled = on;
+}
+function setFormError(msg){
+  if (msg) {
+    $("dl-err-text").textContent = msg;
+    $("dl-err").hidden = false;
+    $("retry-btn").hidden = false;
+  } else {
+    $("dl-err").hidden = true;
+    $("retry-btn").hidden = true;
+  }
 }
 
 async function startDownload(){
   const url = $("url").value.trim();
   if (!url) return;
-  $("dl-btn").disabled = true;
-  $("retry-btn").style.display = "none";
-  $("result").style.display = "none";
+  setFormError(null);
+  $("result").hidden = true;
+  setBusy(true, STATE_LABEL.starting);
+  startElapsed();
   try {
     const job = await api("/api/jobs", { url, initData: inTG ? tg.initData : "" });
     state.currentJob = job.id;
-    busyStatus(STATE_LABEL.starting);
     poll(job.id);
   } catch (e) {
-    plainStatus(e.message, "error");
+    stopElapsed();
+    setBusy(false);
+    setFormError(e.message);
     haptic("error");
-    $("dl-btn").disabled = false;
-    $("retry-btn").style.display = "block";
   }
 }
 
@@ -373,36 +875,36 @@ async function poll(id){
   let job;
   try { job = await api("/api/jobs/" + id); } catch (e) { return; }
   if (job.state === "done") {
-    plainStatus(STATE_LABEL.done + " \u2705", "done");
+    stopElapsed();
+    setBusy(false);
     haptic("success");
     showResult(job);
-    $("dl-btn").disabled = false;
   } else if (job.state === "error") {
-    plainStatus(job.error || COPY.failed, "error");
+    stopElapsed();
+    setBusy(false);
+    setFormError(job.error || COPY.failed);
     haptic("error");
-    $("dl-btn").disabled = false;
-    $("retry-btn").style.display = "block";
   } else {
-    busyStatus(STATE_LABEL[job.state] || job.state);
+    $("task-label").textContent = STATE_LABEL[job.state] || job.state;
     setTimeout(() => poll(id), 2000);
   }
 }
 
 function showResult(job){
   state.result = job;
-  $("result").style.display = "block";
   $("result-title").textContent = job.title || "video";
   $("result-meta").textContent =
-    [job.file_name, job.file_size_mb ? job.file_size_mb + " MB" : null].filter(Boolean).join(" \u00B7 ");
+    [job.file_name, job.file_size_mb ? job.file_size_mb + " MB" : null].filter(Boolean).join("  ·  ");
   const link = $("open-link");
-  if (job.file_url) { link.href = job.file_url; link.style.display = "block"; }
-  else link.style.display = "none";
+  if (job.file_url) { link.href = job.file_url; link.hidden = false; }
+  else link.hidden = true;
   // Distinguish the delivery destination (spec §12.4): file_id is set
   // only when a copy actually went out to the chat (authenticated job
   // under the 50 MB bot upload cap).
   $("result-hint").textContent = job.file_id
     ? "A copy was also sent to your chat with the bot."
-    : "This file is delivered by the app \u2014 save it from here.";
+    : "This file is delivered by the app. Save it from here.";
+  $("result").hidden = false;
 }
 
 $("dl-btn").addEventListener("click", startDownload);
@@ -413,14 +915,14 @@ $("save-btn").addEventListener("click", async () => {
   const job = state.result;
   if (!job) return;
   if (!await jobAlive(job.id)) {
-    plainStatus(COPY.expired, "error");
+    setFormError(COPY.expired);
     haptic("error");
     return;
   }
   haptic("light");
   if (inTG && typeof tg.downloadFile === "function") {
     tg.downloadFile({ url: job.file_url, file_name: job.file_name || "video.mp4" }, (accepted) => {
-      if (!accepted) plainStatus("Download cancelled.", "");
+      if (!accepted) toast("Download cancelled.");
     });
   } else {
     // browser: Content-Disposition: attachment makes this a plain download
@@ -433,7 +935,7 @@ $("open-link").addEventListener("click", async (e) => {
   if (!job || !job.file_url) return;
   e.preventDefault();
   if (!await jobAlive(job.id)) {
-    plainStatus(COPY.expired, "error");
+    setFormError(COPY.expired);
     haptic("error");
     return;
   }
@@ -442,8 +944,7 @@ $("open-link").addEventListener("click", async (e) => {
 
 // Mini App -> bot handoff (spec §12.4): the bot accepts the same links
 // in chat, so the exit back is a plain chat link — no deep-link claim.
-$("open-chat").addEventListener("click", (e) => {
-  e.preventDefault();
+$("open-chat").addEventListener("click", () => {
   haptic("light");
   if (inTG && typeof tg.openTelegramLink === "function") {
     tg.openTelegramLink("https://t.me/harzad_bot");
@@ -452,14 +953,28 @@ $("open-chat").addEventListener("click", (e) => {
   }
 });
 
-// ---- chat tab ----
+// ---- chat tab ---------------------------------------------------------------
 function addMsg(role, text){
   state.messages.push({ role, content: text });
   const div = document.createElement("div");
   div.className = "msg " + role;
   div.textContent = text;
   $("messages").appendChild(div);
-  $("messages").scrollTop = $("messages").scrollHeight;
+  scrollChat();
+  return div;
+}
+function scrollChat(){
+  const m = $("main");
+  m.scrollTop = m.scrollHeight;
+}
+// The thinking bubble lives in the DOM only (not in state.messages), so the
+// API history never carries placeholder turns.
+function addThinking(){
+  const div = document.createElement("div");
+  div.className = "msg bot";
+  div.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  $("messages").appendChild(div);
+  scrollChat();
   return div;
 }
 
@@ -470,22 +985,24 @@ async function sendChat(){
   input.value = "";
   addMsg("user", text);
   $("send-btn").disabled = true;
-  const thinking = addMsg("bot", "\u2026");
+  const thinking = addThinking();
   try {
     const data = await api("/api/chat", {
-      messages: state.messages.slice(0, -1),
+      messages: state.messages,
       initData: inTG ? tg.initData : "",
     });
-    thinking.textContent = data.reply || "(empty)";
+    const reply = data.reply || "(empty)";
+    state.messages.push({ role: "bot", content: reply });
+    thinking.textContent = reply;
+    haptic("light");
   } catch (e) {
     thinking.textContent = "Chat is unavailable right now: " + e.message;
+    haptic("error");
   }
   $("send-btn").disabled = false;
-  $("messages").scrollTop = $("messages").scrollHeight;
+  scrollChat();
 }
-
-$("send-btn").addEventListener("click", sendChat);
-$("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+$("chat-form").addEventListener("submit", (e) => { e.preventDefault(); sendChat(); });
 
 // ---- music tab (plan §12.14) --------------------------------------------------
 // The visual library: the same facade views as chat (Latest / Daily /
@@ -496,31 +1013,19 @@ $("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter") send
 const music = {
   view: "latest", sort: "recent", query: "", day: null,
   page: 1, pages: 1, total: 0, days: null,
-  busy: false, entered: false,
+  busy: false, entered: false, allTracks: [],
 };
 let sheetTrack = null;
 let previewAudio = null;
+let previewPlaying = false;
 let resendPoll = null;
-let toastTimer = null;
 
-function toast(msg, ms){
-  const el = $("toast");
-  el.textContent = msg;
-  el.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), ms || 2600);
-}
-
-function esc(s){
-  const d = document.createElement("div");
-  d.textContent = s == null ? "" : String(s);
-  return d.innerHTML;
-}
+function trackWord(n){ return n === 1 ? "track" : "tracks"; }
 
 // Mirrors utils.library.relative_time (the API timestamps carry the
 // server's UTC offset, so the device timezone parses the same instant).
 function relTime(iso){
-  if (!iso) return "—";
+  if (!iso) return "";
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 60) return "just now";
   const m = Math.floor(s / 60);
@@ -530,15 +1035,18 @@ function relTime(iso){
   return Math.floor(h / 24) + " d ago";
 }
 
-function trackWord(n){ return n === 1 ? "track" : "tracks"; }
-
 function coverSrc(track){
   if (!track.has_cover) return null;
   let src = "/api/library/cover/" + encodeURIComponent(track.track_key);
   if (inTG) src += "?initData=" + encodeURIComponent(tg.initData);
   return src;
 }
-
+function letterNode(track){
+  const ph = document.createElement("div");
+  ph.className = "letter";
+  ph.textContent = ((track.artist || track.title || "?").trim()[0] || "?").toUpperCase();
+  return ph;
+}
 function coverNode(track, sheet){
   // img or letter tile; a dead cover URL degrades to the letter tile
   const src = coverSrc(track);
@@ -551,22 +1059,23 @@ function coverNode(track, sheet){
     img.onerror = () => { img.replaceWith(coverNode(track, sheet)); };
     return img;
   }
-  const ph = document.createElement("div");
-  ph.className = "ph";
-  ph.textContent = ((track.artist || track.title || "?").trim()[0] || "?").toUpperCase();
-  return ph;
+  return letterNode(track);
 }
 
-function tileEl(track){
+function tileEl(track, i){
   const t = document.createElement("div");
   t.className = "tile";
-  t.appendChild(coverNode(track, false));
+  t.style.setProperty("--i", Math.min(i, 12));
+  const cw = document.createElement("div");
+  cw.className = "coverwrap";
+  cw.appendChild(coverNode(track, false));
   if (track.duration) {
-    const d = document.createElement("div");
-    d.className = "dur";
+    const d = document.createElement("span");
+    d.className = "dur num";
     d.textContent = track.duration;
-    t.appendChild(d);
+    cw.appendChild(d);
   }
+  t.appendChild(cw);
   const tt = document.createElement("div");
   tt.className = "tt";
   tt.textContent = track.title;
@@ -579,47 +1088,79 @@ function tileEl(track){
   return t;
 }
 
-function hideMusicState(){
-  $("music-state").style.display = "none";
-  $("music-state").innerHTML = "";
+function renderGrid(animate){
+  const grid = $("track-grid");
+  grid.innerHTML = "";
+  music.allTracks.forEach((t, i) => {
+    const el = tileEl(t, animate ? i : 0);
+    if (!animate) el.style.animation = "none";
+    grid.appendChild(el);
+  });
 }
 
+function showSkeleton(){
+  const grid = $("track-grid");
+  grid.innerHTML = "";
+  for (let i = 0; i < 6; i++) {
+    const t = document.createElement("div");
+    t.className = "skel";
+    t.innerHTML = '<div class="sk coverwrap"></div><div class="sk sk-l1"></div><div class="sk sk-l2"></div>';
+    grid.appendChild(t);
+  }
+}
+
+function hideMusicState(){
+  $("music-state").hidden = true;
+  $("music-state").innerHTML = "";
+}
 function showMusicState(kind, extra){
   const el = $("music-state");
   el.innerHTML = "";
-  let big = "", t = "", desc = "", retry = false;
+  let iconName = "music", tone = "soft", t = "", desc = "", retry = false;
   if (kind === "empty") {
-    big = "🎵"; t = "No music saved yet.";
+    iconName = "music";
+    t = "No music saved yet.";
     desc = "Your tracks will appear here automatically when you receive music.";
   } else if (kind === "often-empty") {
-    big = "⭐"; t = "Often played";
+    iconName = "clock";
+    t = "Often played";
     desc = "Your frequently requested tracks will appear here as you listen again.";
   } else if (kind === "no-results") {
-    big = "🔎"; t = "No matching tracks";
+    iconName = "search";
+    t = "No matching tracks";
     desc = 'No tracks matched "' + (extra || "") + '". Try another title or artist name.';
   } else if (kind === "unavailable") {
-    big = "⚠"; t = "My music is temporarily unavailable.";
+    iconName = "cloud-off"; tone = "warn";
+    t = "My music is temporarily unavailable.";
     desc = "Your library data could not be loaded. Please try again shortly.";
     retry = true;
   } else if (kind === "no-auth") {
-    big = "🔒"; t = "Open the app from Telegram to see your library.";
-    desc = "Your music is private — the library only loads inside Telegram.";
+    iconName = "lock";
+    t = "Open the app from Telegram to see your library.";
+    desc = "Your music stays private: the library only loads inside Telegram.";
   } else if (kind === "day-empty") {
-    big = "🗓"; t = "No tracks on this day.";
+    iconName = "calendar";
+    t = "No tracks on this day.";
     desc = "This day's list is empty.";
   }
-  const b = document.createElement("div"); b.className = "big"; b.textContent = big;
-  const tt = document.createElement("div"); tt.className = "t"; tt.textContent = t;
-  const dd = document.createElement("div"); dd.textContent = desc;
-  el.appendChild(b); el.appendChild(tt); el.appendChild(dd);
+  const ico = document.createElement("div");
+  ico.className = "state-ico " + tone;
+  ico.appendChild(icon(iconName));
+  const title = document.createElement("div");
+  title.className = "state-t";
+  title.textContent = t;
+  const d = document.createElement("div");
+  d.className = "state-d";
+  d.textContent = desc;
+  el.appendChild(ico); el.appendChild(title); el.appendChild(d);
   if (retry) {
     const btn = document.createElement("button");
-    btn.className = "btn";
+    btn.className = "btn primary";
     btn.textContent = "Try again";
     btn.addEventListener("click", () => loadMusic());
     el.appendChild(btn);
   }
-  el.style.display = "block";
+  el.hidden = false;
 }
 
 function musicUrl(page){
@@ -634,71 +1175,88 @@ function musicUrl(page){
   return "/api/library?" + p.toString();
 }
 
-function renderMusic(data){
+function renderDays(data){
+  const daysEl = $("day-list");
+  daysEl.innerHTML = "";
+  for (const d of data.days) {
+    const row = document.createElement("button");
+    row.className = "dayrow";
+    row.type = "button";
+    const ic = document.createElement("span");
+    ic.className = "dico";
+    ic.appendChild(icon("calendar"));
+    const mid = document.createElement("div");
+    const l = document.createElement("div");
+    l.className = "dl";
+    l.textContent = d.label;
+    const s = document.createElement("div");
+    s.className = "ds num";
+    s.textContent = d.count + " " + trackWord(d.count);
+    mid.appendChild(l); mid.appendChild(s);
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    chev.appendChild(icon("chevron-right"));
+    row.appendChild(ic); row.appendChild(mid); row.appendChild(chev);
+    row.addEventListener("click", () => {
+      haptic("light");
+      music.day = d.day;
+      loadMusic();
+    });
+    daysEl.appendChild(row);
+  }
+}
+
+function renderCount(data){
+  const count = $("music-count");
+  let text = "";
+  if (music.view === "latest") {
+    text = data.total + " " + trackWord(data.total) + " saved";
+  } else if (music.view === "search") {
+    text = "Found " + data.total + " " + trackWord(data.total) + ".";
+  } else if (music.view === "often") {
+    text = "Often played · " + data.total + " " + trackWord(data.total);
+  } else if (music.view === "browse") {
+    text = data.total + " " + trackWord(data.total);
+  } else { // daily + day
+    const label = (music.days || []).find((d) => d.day === data.day);
+    text = (label ? label.label : (data.day || "")) + " · "
+      + data.total + " " + trackWord(data.total);
+  }
+  if (data.pages > 1) text += "   Page " + data.page + " of " + data.pages;
+  count.textContent = text;
+}
+
+function renderMusic(data, append){
   const grid = $("track-grid");
   const daysEl = $("day-list");
-  const count = $("music-count");
   const loadmore = $("load-more");
   const searchErr = $("search-err");
-  grid.innerHTML = "";
-  daysEl.innerHTML = "";
+  searchErr.hidden = true;
   searchErr.textContent = "";
   hideMusicState();
-  $("day-back").style.display = "none";
+  $("day-back").hidden = true;
+  daysEl.innerHTML = "";
 
   if (data.days) music.days = data.days;
 
   // Daily, no day picked yet: the day list IS the view
   if (music.view === "daily" && !music.day) {
-    count.textContent = "";
-    loadmore.style.display = "none";
+    $("music-count").textContent = "";
+    loadmore.hidden = true;
+    grid.innerHTML = "";
+    music.allTracks = [];
     if (!data.days || data.days.length === 0) { showMusicState("empty"); return; }
-    for (const d of data.days) {
-      const row = document.createElement("div");
-      row.className = "dayrow";
-      const left = document.createElement("div");
-      left.className = "dl";
-      left.textContent = d.label;
-      const right = document.createElement("div");
-      right.className = "dr";
-      right.textContent = d.count + " " + trackWord(d.count);
-      const chev = document.createElement("span");
-      chev.className = "chev";
-      chev.textContent = "›";
-      right.appendChild(chev);
-      row.appendChild(left);
-      row.appendChild(right);
-      row.addEventListener("click", () => {
-        haptic("light");
-        music.day = d.day;
-        loadMusic();
-      });
-      daysEl.appendChild(row);
-    }
+    renderDays(data);
     return;
   }
 
-  // the count line (deck-aligned: LIB_MENU_COUNT / LIB_SEARCH_FOUND)
-  if (music.view === "latest") {
-    count.textContent = data.total + " " + trackWord(data.total) + " saved";
-  } else if (music.view === "search") {
-    count.textContent = "Found " + data.total + " " + trackWord(data.total) + ".";
-  } else if (music.view === "often") {
-    count.textContent = "Often played · " + data.total + " " + trackWord(data.total);
-  } else if (music.view === "browse") {
-    count.textContent = data.total + " " + trackWord(data.total);
-  } else { // daily + day
-    const label = (music.days || []).find((d) => d.day === data.day);
-    count.textContent = (label ? label.label : (data.day || "")) + " · "
-      + data.total + " " + trackWord(data.total);
-  }
-  if (data.pages > 1) {
-    count.textContent += " · Page " + data.page + " of " + data.pages;
-  }
+  renderCount(data);
 
   // states
   if (data.total === 0) {
-    loadmore.style.display = "none";
+    grid.innerHTML = "";
+    music.allTracks = [];
+    loadmore.hidden = true;
     if (music.view === "often") showMusicState("often-empty");
     else if (music.view === "search") showMusicState("no-results", data.query);
     else if (music.view === "daily") showMusicState("day-empty");
@@ -706,28 +1264,31 @@ function renderMusic(data){
     return;
   }
 
-  if (music.view === "daily" && music.day) $("day-back").style.display = "inline-block";
-  for (const t of data.tracks) grid.appendChild(tileEl(t));
-  loadmore.style.display = data.page < data.pages ? "block" : "none";
+  if (music.view === "daily" && music.day) $("day-back").hidden = false;
+  if (append) music.allTracks = music.allTracks.concat(data.tracks);
+  else music.allTracks = data.tracks.slice();
+  renderGrid(true);
+  loadmore.hidden = data.page >= data.pages;
 }
 
 async function loadMusic(reset){
   if (music.busy) return;
   if (reset === undefined) reset = true;
   music.busy = true;
-  if (reset) music.page = 1;
+  if (reset) { music.page = 1; music.allTracks = []; }
   try {
     const data = await api(musicUrl(reset ? 1 : music.page + 1));
     music.page = data.page;
     music.pages = data.pages;
     music.total = data.total;
-    renderMusic(data);
+    renderMusic(data, !reset);
   } catch (e) {
     $("track-grid").innerHTML = "";
     $("day-list").innerHTML = "";
     $("music-count").textContent = "";
-    $("load-more").style.display = "none";
+    $("load-more").hidden = true;
     if (music.view === "search" && /2 characters/.test(e.message || "")) {
+      $("search-err").hidden = false;
       $("search-err").textContent = e.message;
       hideMusicState();
     } else if (/temporarily unavailable/.test(e.message || "")) {
@@ -748,10 +1309,13 @@ function setView(view){
   if (music.view === view) return;
   music.view = view;
   music.day = null;
-  document.querySelectorAll("#music-chips .chip").forEach((c) =>
-    c.classList.toggle("active", c.dataset.view === view));
-  $("music-sorts").style.display = view === "browse" ? "flex" : "none";
-  $("search-box").style.display = view === "search" ? "flex" : "none";
+  document.querySelectorAll("#music-chips .chip").forEach((c) => {
+    const on = c.dataset.view === view;
+    c.classList.toggle("active", on);
+    c.setAttribute("aria-pressed", String(on));
+  });
+  $("music-sorts").hidden = view !== "browse";
+  $("search-box").hidden = view !== "search";
   loadMusic();
 }
 
@@ -767,12 +1331,14 @@ document.querySelectorAll("#music-sorts .chip").forEach((c) =>
     haptic("light");
     if (music.sort === c.dataset.sort) return;
     music.sort = c.dataset.sort;
-    document.querySelectorAll("#music-sorts .chip").forEach((x) =>
-      x.classList.toggle("active", x.dataset.sort === music.sort));
+    document.querySelectorAll("#music-sorts .chip").forEach((x) => {
+      const on = x.dataset.sort === music.sort;
+      x.classList.toggle("active", on);
+      x.setAttribute("aria-pressed", String(on));
+    });
     loadMusic();
   }));
-$("search-btn").addEventListener("click", runSearch);
-$("search-input").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
+$("search-box").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
 $("day-back").addEventListener("click", () => {
   haptic("light");
   music.day = null;
@@ -785,10 +1351,11 @@ function enterMusic(){
   music.entered = true;
   if (!inTG) {
     // the library endpoints require initData — no preview mode (personal data)
-    $("music-chips").style.display = "none";
-    $("music-browser-note").style.display = "block";
+    document.querySelector(".chipbar").style.display = "none";
+    showMusicState("no-auth");
     return;
   }
+  showSkeleton();
   loadMusic();
 }
 
@@ -796,8 +1363,17 @@ function enterMusic(){
 
 function setSheetStatus(text, cls){
   const el = $("sheet-status");
-  el.className = cls || "";
-  el.textContent = text || "";
+  el.className = "sheet-status " + (cls || "");
+  el.innerHTML = "";
+  if (!text) { el.hidden = true; return; }
+  el.hidden = false;
+  const icoName = cls === "done" ? "circle-check"
+    : cls === "error" ? "alert-circle"
+    : cls === "busy" ? "loader-2" : null;
+  if (icoName) el.appendChild(icon(icoName));
+  const span = document.createElement("span");
+  span.textContent = text;
+  el.appendChild(span);
 }
 
 function setSheetBusy(busy){
@@ -805,9 +1381,30 @@ function setSheetBusy(busy){
     $(id).disabled = busy);
 }
 
+function renderSheetMeta(t){
+  const stats = [
+    ["Duration", t.duration || ""],
+    ["Requested", t.request_count <= 1 ? "once" : t.request_count + " times"],
+    ["Last requested", relTime(t.last_requested)],
+    ["Added", relTime(t.added_on)],
+  ].filter((s) => s[1]);
+  const el = $("sheet-meta");
+  el.innerHTML = "";
+  stats.forEach((s) => {
+    const cell = document.createElement("div");
+    cell.className = "stat";
+    const b = document.createElement("b");
+    b.textContent = s[0];
+    const v = document.createElement("span");
+    v.textContent = s[1];
+    cell.appendChild(b); cell.appendChild(v);
+    el.appendChild(cell);
+  });
+}
+
 function exitRemoveConfirm(){
-  $("sheet-confirm").style.display = "none";
-  $("sheet-actions").style.display = "grid";
+  $("sheet-confirm").hidden = true;
+  $("sheet-actions").hidden = false;
 }
 
 function openSheet(track){
@@ -816,58 +1413,66 @@ function openSheet(track){
   clearInterval(resendPoll);
   $("sheet-title").textContent = track.title;
   $("sheet-artist").textContent = track.artist || "";
-  $("sheet-album").textContent = track.album || "";
-  $("sheet-album").style.display = track.album ? "block" : "none";
-  $("sheet-meta").textContent = [
-    track.duration,
-    track.request_count <= 1 ? "Requested once" : "Requested " + track.request_count + " times",
-    "Last requested " + relTime(track.last_requested),
-    "Added " + relTime(track.added_on),
-  ].filter(Boolean).join("  ·  ");
+  const album = $("sheet-album");
+  album.hidden = !track.album;
+  album.textContent = track.album || "";
+  renderSheetMeta(track);
   const wrap = $("sheet-coverwrap");
   wrap.innerHTML = "";
   wrap.appendChild(coverNode(track, true));
   const sp = $("sheet-spotify");
   if (track.spotify_url) {
-    sp.style.display = "block";
     sp.href = track.spotify_url;
+    sp.hidden = false;
   } else {
-    sp.style.display = "none";
+    sp.hidden = true;
   }
   exitRemoveConfirm();
   setSheetStatus("");
-  $("sheet-backdrop").style.display = "block";
-  requestAnimationFrame(() => $("sheet").classList.add("open"));
+  $("sheet-backdrop").hidden = false;
+  requestAnimationFrame(() => {
+    $("sheet-backdrop").classList.add("open");
+    $("sheet").classList.add("open");
+  });
+  $("sheet-x").focus({ preventScroll: true });
 }
 
 function closeSheet(){
   $("sheet").classList.remove("open");
-  setTimeout(() => { $("sheet-backdrop").style.display = "none"; }, 220);
+  $("sheet-backdrop").classList.remove("open");
+  setTimeout(() => {
+    if (!$("sheet").classList.contains("open")) {
+      $("sheet").hidden = true;
+      $("sheet-backdrop").hidden = true;
+    }
+  }, 300);
   stopPreview();
   clearInterval(resendPoll);
 }
 
 $("sheet-backdrop").addEventListener("click", closeSheet);
-$("sheet-close").addEventListener("click", closeSheet);
+$("sheet-x").addEventListener("click", closeSheet);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("sheet").hidden) closeSheet();
+});
 
 $("sheet-resend").addEventListener("click", async () => {
   const key = encodeURIComponent(sheetTrack.track_key);
   setSheetBusy(true);
-  setSheetStatus("Sending to your chat…");
+  setSheetStatus("Sending to your chat…", "busy");
   try {
     const r = await api("/api/library/track/" + key + "/resend",
       { initData: inTG ? tg.initData : "" });
     if (r.state === "sent") {
-      setSheetStatus("Sent to your chat ✅", "done");
+      setSheetStatus("Sent to your chat", "done");
       haptic("success");
       // the row's count/last-request advanced on the server — keep the
       // sheet honest without a re-fetch
       sheetTrack.request_count += 1;
       sheetTrack.last_requested = new Date().toISOString();
-      $("sheet-meta").textContent = $("sheet-meta").textContent.replace(
-        /Requested [^·]+/, "Requested " + sheetTrack.request_count + " times");
+      renderSheetMeta(sheetTrack);
     } else if (r.state === "queued") {
-      setSheetStatus("Re-downloading — I'll send it to your chat when ready.");
+      setSheetStatus("Re-downloading — I'll send it to your chat when ready.", "busy");
       pollResend(key);
     }
   } catch (e) {
@@ -892,7 +1497,7 @@ function pollResend(key){
       const s = await api(statusUrl);
       if (s.state === "sent") {
         clearInterval(resendPoll);
-        setSheetStatus("Sent to your chat ✅", "done");
+        setSheetStatus("Sent to your chat", "done");
         haptic("success");
         loadMusic(); // the grid's order may have shifted
       } else if (s.state === "failed") {
@@ -900,7 +1505,7 @@ function pollResend(key){
         setSheetStatus(s.error || "This download failed. Check the link or try again.", "error");
         haptic("error");
       } else {
-        setSheetStatus(LABEL[s.state] || "Working…");
+        setSheetStatus(LABEL[s.state] || "Working…", "busy");
       }
     } catch (e) { /* pruned — leave the last status in place */ }
   }, 2500);
@@ -908,37 +1513,70 @@ function pollResend(key){
 
 $("sheet-preview").addEventListener("click", async () => {
   const key = encodeURIComponent(sheetTrack.track_key);
-  setSheetStatus("Loading preview…");
+  setSheetStatus("Loading preview…", "busy");
   try {
     const r = await api("/api/library/track/" + key + "/preview",
       { initData: inTG ? tg.initData : "" });
-    playPreview(r.url, sheetTrack.title);
+    playPreview(r.url, sheetTrack);
   } catch (e) {
     setSheetStatus(e.message, "error");
     haptic("error");
   }
 });
 
-function playPreview(url, title){
+function playPreview(url, track){
   stopPreview();
   previewAudio = new Audio(url);
-  $("player-title").textContent = title + " · 30s preview";
-  $("playerbar").style.display = "flex";
-  previewAudio.play().catch(() => setSheetStatus("Preview playback failed.", "error"));
+  previewPlaying = true;
+  $("player-title").textContent = track.title;
+  const pb = $("pb-cover");
+  const src = coverSrc(track);
+  if (src) {
+    pb.innerHTML = "";
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = src;
+    img.onerror = () => { pb.innerHTML = ""; pb.appendChild(icon("music")); };
+    pb.appendChild(img);
+  } else {
+    mountIcon(pb, "music");
+  }
+  mountIcon($("player-toggle"), "player-pause");
+  $("player-toggle").setAttribute("aria-label", "Pause");
+  $("playerbar").hidden = false;
+  previewAudio.play().catch(() => {
+    setSheetStatus("Preview playback failed.", "error");
+    stopPreview();
+  });
   previewAudio.onended = stopPreview;
 }
-
+function setPlayerIcon(){
+  mountIcon($("player-toggle"), previewPlaying ? "player-pause" : "player-play");
+  $("player-toggle").setAttribute("aria-label", previewPlaying ? "Pause" : "Play");
+}
 function stopPreview(){
   if (previewAudio) { previewAudio.pause(); previewAudio = null; }
-  $("playerbar").style.display = "none";
+  previewPlaying = false;
+  $("playerbar").hidden = true;
 }
-$("player-stop").addEventListener("click", stopPreview);
+$("player-toggle").addEventListener("click", () => {
+  if (!previewAudio) return;
+  haptic("light");
+  if (previewPlaying) {
+    previewAudio.pause();
+    previewPlaying = false;
+  } else {
+    previewAudio.play().catch(() => stopPreview());
+    previewPlaying = true;
+  }
+  setPlayerIcon();
+});
 
 $("sheet-remove").addEventListener("click", () => {
   $("sheet-confirm-text").textContent =
     'Remove "' + sheetTrack.title + '" from your library? It does not delete previously sent messages.';
-  $("sheet-actions").style.display = "none";
-  $("sheet-confirm").style.display = "grid";
+  $("sheet-actions").hidden = true;
+  $("sheet-confirm").hidden = false;
 });
 $("sheet-rm-keep").addEventListener("click", exitRemoveConfirm);
 $("sheet-rm-yes").addEventListener("click", async () => {
@@ -957,6 +1595,47 @@ $("sheet-rm-yes").addEventListener("click", async () => {
     $("sheet-rm-yes").disabled = false;
   }
 });
+
+// ---- static icon mount + boot -----------------------------------------------
+document.querySelectorAll("[data-ico]").forEach((el) => mountIcon(el, el.dataset.ico));
+mountIcon($("url-ico"), "link");
+mountIcon($("search-ico"), "search");
+mountIcon($("go-ico"), "search");
+mountIcon($("task-ico"), "loader-2", "spin");
+mountIcon($("task-elapsed-ico"), "clock");
+mountIcon($("result-ico"), "circle-check");
+mountIcon($("dl-err-ico"), "alert-circle");
+mountIcon($("send-btn"), "send");
+mountIcon($("sheet-x"), "x");
+$("save-btn").appendChild(icon("cloud-download"));
+$("save-btn").append(" Save to device");
+$("open-link").appendChild(icon("link"));
+$("open-link").append(" Download via link");
+$("open-chat").appendChild(icon("message"));
+$("open-chat").append(" Open in chat");
+$("load-more").appendChild(icon("download"));
+$("load-more").append(" Load more");
+$("sheet-resend").appendChild(icon("refresh"));
+$("sheet-resend").append(" Get again");
+$("sheet-preview").appendChild(icon("player-play"));
+$("sheet-preview").append(" 30s preview");
+$("sheet-spotify").appendChild(icon("external-link"));
+$("sheet-spotify").append(" Spotify");
+$("sheet-remove").appendChild(icon("trash"));
+$("sheet-remove").append(" Remove");
+$("sheet-rm-yes").appendChild(icon("trash"));
+$("sheet-rm-yes").append(" Yes, remove");
+$("day-back").appendChild(icon("chevron-left"));
+$("day-back").append(" All days");
+
+// brand mark (assets/logo.png, 64 px, embedded to keep the app single-file)
+(function () {
+  const b64 = "data:image/png;base64,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";
+  $("brand-logo").src = b64;
+})();
+
+bootTg();
+boot();
 </script>
 </body>
 </html>
