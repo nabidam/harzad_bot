@@ -40,8 +40,34 @@ jobs:
       - name: Run tests (live-marked tests excluded by default)
         run: uv run pytest -q
 
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Gates the deploy on the SPA building green. The VPS rebuilds from the
+    # same source at deploy time (deploy.sh) — this is the fast-failing
+    # check that keeps a red frontend out of the box.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: web/frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: web/frontend
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: web/frontend
+        run: npm test
+      - name: Build (single inlined index.html)
+        working-directory: web/frontend
+        run: npm run build
+
   deploy:
-    needs: test
+    needs: [test, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

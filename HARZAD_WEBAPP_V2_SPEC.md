@@ -180,31 +180,34 @@ costs more per feature than a component model saves. Migration happens
 
 ## 7. Deploy pipeline
 
-Decision correction (2026-11-25, Phase 0 start): the VPS has no GitHub
-token, and adding a PAT just for artifact downloads is a new secret on a
-box that already trusts SSH. The build is delivered as a **branch**
-instead — no credentials anywhere on the VPS.
+Decision corrections (2026-11-25, both during Phase 0): first — the VPS has
+no GitHub token, so the built file originally shipped as a **branch**
+(`webapp-dist`) instead of a CI artifact download (no PAT on the box).
+Second — the VPS turned out to have node (nvm) and full infra, so the
+branch indirection is retired: the build runs on the VPS itself. One
+workflow, no cross-workflow race, no force-pushed branch, no
+publish-failure mode (a transient GitHub 5xx during the first publish had
+required a manual branch seed).
 
-1. **GitHub Actions** (`.github/workflows/webapp.yml`): on push to `main` —
-   `npm ci && npm run typecheck && npm test && vite build` (node 20). The
-   build is **single-file**: `vite-plugin-singlefile` inlines all JS/CSS
-   into one `web/static/index.html` (~200 kB), so the existing
-   `web/app.py` route serves it unchanged and the deploy surface is exactly
-   one file. The commit publishes the built file on branch `webapp-dist`
-   (main + one commit; force-pushed; uses the built-in `GITHUB_TOKEN` —
-   the only credential involved). The built file is stashed in
-   `$RUNNER_TEMP` before `git checkout -f`, because checkout would discard
-   it.
+1. **GitHub Actions** (`.github/workflows/deploy.yml`): on push to `main` —
+   `test` (pytest against live Postgres) and `frontend` (node 20: `npm ci`,
+   typecheck, vitest, `vite build`) run in parallel; `deploy` runs only
+   when both are green. The build is **single-file**:
+   `vite-plugin-singlefile` inlines all JS/CSS into one `index.html`
+   (~200 kB), so `web/app.py`'s `FileResponse` route needs no change.
 2. **`scripts/deploy.sh`** (VPS): after `git reset --hard origin/main`,
-   `git fetch origin webapp-dist`, `git archive` the static tree into a
-   temp dir, validate `index.html` exists, then `rsync -a --delete` into
-   `web/static/`. If any step fails: previous `web/static` contents stay
-   intact (never serve a half-replaced static dir). Existing
-   uv/alembic/systemd steps unchanged.
-3. No node on the VPS, no secrets on the VPS.
+   `npm ci && npm run build` in `web/frontend/` rewrites
+   `web/static/index.html` in place (node via `~/.nvm`; the script fixes
+   PATH for non-interactive ssh, since `/usr/local/bin/node` symlinks into
+   `/root`). Build failure → abort before migrations/restart: the running
+   service keeps the previous code and static file. uv/alembic/systemd
+   steps otherwise unchanged.
+3. No secrets on the VPS, no artifacts, no extra branches.
 4. `web/static/` in the repo holds the last committed build snapshot so
    local dev / test runs never need node; the VPS overwrites it with the
-   same-commit build at deploy time.
+   same-source build at deploy time. The build is byte-deterministic
+   (verified in Phase 0: node-20 CI output == node-24 local output), so
+   `test_index_serves_spa`'s byte-equality stays meaningful on all three.
 
 ## 8. Test strategy rework
 
