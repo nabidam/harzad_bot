@@ -120,6 +120,11 @@ export const COPY = {
   noTags: "No tags yet.",
   deleteTagQ: (name: string) =>
     'Delete tag "' + name + '"? It is removed from every track.',
+  selCount: (n: number) => n + " selected",
+  addedManyToPlaylist: (n: number, name: string) =>
+    n + " added to " + name + ".",
+  removedFromPlaylist: (n: number) => n + " removed from this playlist.",
+  removeFailed: "Couldn't remove from the playlist.",
 };
 
 /** Job states, the bot's status vocabulary (spec §12.2). */

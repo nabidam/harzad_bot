@@ -180,6 +180,17 @@ export interface MusicApi {
   sheetTagAssign: (name: string) => void;
   sheetTagUnlink: (name: string) => void;
   sheetPlAdd: (plId: number) => void;
+  // grid multi-select (v2 §5.2: long-press -> select -> add/remove batch)
+  selMode: boolean;
+  selKeys: string[];
+  selPlPick: boolean;
+  selPlayerVisible: boolean;
+  onSelEnter: (key: string) => void;
+  onSelToggle: (key: string) => void;
+  onSelCancel: () => void;
+  onSelOpenPicker: () => void;
+  onSelAddToPlaylist: (plId: number) => Promise<void>;
+  onSelRemoveFromPlaylist: () => Promise<void>;
 }
 
 export function useMusic(
@@ -455,6 +466,110 @@ export function useMusic(
     [rerender],
   );
 
+  // --- grid multi-select (v2 §5.2: long-press, batch add/remove) ------------
+  // selMode/selKeys are plain state (the grid + selbar re-render per change);
+  // the selection never outlives its context (cleared on view/sheet/playlist
+  // switches below).
+
+  const [selMode, setSelMode] = useState(false);
+  const [selKeys, setSelKeys] = useState<string[]>([]);
+  const [selPlPick, setSelPlPick] = useState(false);
+
+  const clearSel = useCallback(() => {
+    setSelMode(false);
+    setSelKeys([]);
+    setSelPlPick(false);
+  }, []);
+
+  const selEnter = useCallback((key: string) => {
+    haptic("light");
+    setSelMode(true);
+    setSelKeys([key]);
+  }, []);
+
+  const selToggle = useCallback((key: string) => {
+    setSelKeys((ks) =>
+      ks.includes(key) ? ks.filter((x) => x !== key) : [...ks, key],
+    );
+  }, []);
+
+  // deselecting the last tile leaves the mode
+  useEffect(() => {
+    if (selMode && selKeys.length === 0) setSelMode(false);
+  }, [selMode, selKeys]);
+
+  const selOpenPicker = useCallback(() => {
+    haptic("light");
+    setSelPlPick(true);
+  }, []);
+
+  const selAddToPlaylist = useCallback(
+    async (plId: number) => {
+      if (selKeys.length === 0) return;
+      const row = plRef.current.list.find((x) => x.id === plId);
+      const name = row ? row.name : "";
+      try {
+        const r = await api<{ added: number; unknown: string[] }>(
+          "/api/library/playlists/" + plId + "/tracks",
+          { track_keys: selKeys },
+        );
+        if (r.added > 0) {
+          toast(COPY.addedManyToPlaylist(r.added, name));
+          haptic("success");
+          plRef.current.list = plRef.current.list.map((x) =>
+            x.id === plId ? { ...x, count: x.count + r.added } : x,
+          );
+          rerender();
+          if (r.unknown.length > 0) loadMusic(true); // rows vanished mid-tap
+        } else {
+          toast(COPY.alreadyInPlaylist);
+          haptic("light");
+        }
+        clearSel();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e));
+        haptic("error");
+      }
+    },
+    [selKeys, clearSel, loadMusic, rerender, toast],
+  );
+
+  const selRemoveFromPlaylist = useCallback(async () => {
+    const pl = plRef.current;
+    if (pl.openId === null || selKeys.length === 0) return;
+    const id = pl.openId;
+    // one DELETE per key (the endpoint is per-key); 404s are skipped, the
+    // toast reports what actually went
+    const results = await Promise.all(
+      selKeys.map((k) =>
+        api(
+          "/api/library/playlists/" + id + "/tracks/" + encodeURIComponent(k),
+          {},
+          "DELETE",
+        )
+          .then(() => true)
+          .catch(() => false),
+      ),
+    );
+    const n = results.filter(Boolean).length;
+    if (n === 0) {
+      toast(COPY.removeFailed);
+      haptic("error");
+      return;
+    }
+    toast(COPY.removedFromPlaylist(n));
+    haptic("light");
+    const gone = new Set(selKeys.filter((_, i) => results[i]));
+    pl.tracks = pl.tracks.filter((t) => !gone.has(t.track_key));
+    pl.total = Math.max(0, pl.total - n);
+    pl.list = pl.list.map((x) =>
+      x.id === id ? { ...x, count: Math.max(0, x.count - n) } : x,
+    );
+    setGridNonce((x) => x + 1);
+    if (pl.tracks.length === 0) void loadPlTracks(true); // refetch the truth
+    clearSel();
+  }, [selKeys, clearSel, loadPlTracks, toast]);
+
   const openPlaylist = useCallback(
     (id: number) => {
       const pl = plRef.current;
@@ -467,10 +582,11 @@ export function useMusic(
       setPlCreateOpen(false);
       setPlRenameOpen(false);
       setPlDelConfirm(false);
+      clearSel(); // a new context owns its own selection
       rerender();
       loadPlTracks(true);
     },
-    [loadPlTracks, rerender],
+    [clearSel, loadPlTracks, rerender],
   );
 
   const plBack = useCallback(() => {
@@ -483,9 +599,10 @@ export function useMusic(
     setPlCreateOpen(false);
     setPlRenameOpen(false);
     setPlDelConfirm(false);
+    clearSel();
     rerender();
     loadPlaylists(); // counts may have changed
-  }, [loadPlaylists, rerender]);
+  }, [clearSel, loadPlaylists, rerender]);
 
   const plCreate = useCallback(
     async (name: string) => {
@@ -572,6 +689,7 @@ export function useMusic(
       if (m.view === v) return;
       m.view = v;
       m.day = null;
+      clearSel(); // a new context owns its own selection
       if (v === "playlists") {
         const pl = plRef.current;
         pl.openId = null;
@@ -588,7 +706,7 @@ export function useMusic(
       rerender();
       loadMusic(true);
     },
-    [loadMusic, loadPlaylists, rerender],
+    [clearSel, loadMusic, loadPlaylists, rerender],
   );
 
   const onSort = useCallback(
@@ -938,6 +1056,16 @@ export function useMusic(
     onPlLoadMore: () => void loadPlTracks(false),
     onPlRetry: () =>
       plOpen ? void loadPlTracks(true) : void loadPlaylists(),
+    selMode,
+    selKeys,
+    selPlPick,
+    selPlayerVisible: !!player.track,
+    onSelEnter: selEnter,
+    onSelToggle: selToggle,
+    onSelCancel: clearSel,
+    onSelOpenPicker: selOpenPicker,
+    onSelAddToPlaylist: selAddToPlaylist,
+    onSelRemoveFromPlaylist: selRemoveFromPlaylist,
     sheet: sheetTrack
       ? {
           track: sheetTrack,

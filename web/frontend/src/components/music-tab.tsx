@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Track } from "../api/types";
 import { COPY } from "../copy";
+import { haptic } from "../theme";
 import { Cover } from "./cover";
 import { Icon } from "../icons";
 import { StateBox } from "./state-box";
@@ -11,30 +12,155 @@ export interface MusicTabProps {
   onSearchInput: (v: string) => void;
 }
 
+const LONG_PRESS_MS = 420;
+const DRAG_CANCEL_PX = 24;
+
 function Tile({
   track,
   index,
   onOpen,
+  selMode,
+  selected,
+  onEnterSel,
+  onToggleSel,
 }: {
   track: Track;
   index: number;
   onOpen: (t: Track, index: number) => void;
+  selMode: boolean;
+  selected: boolean;
+  onEnterSel: (key: string) => void;
+  onToggleSel: (key: string) => void;
 }) {
+  const pressTimer = useRef<number | null>(null);
+  const pressStart = useRef<{ x: number; y: number } | null>(null);
+  const firedRef = useRef(false);
+
+  const cancelPress = () => {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    pressStart.current = null;
+  };
+  useEffect(() => cancelPress, []);
+
   return (
     <div
-      className="tile"
+      className={"tile" + (selected ? " sel" : "")}
       style={{ "--i": Math.min(index, 12) } as CSSProperties}
+      onPointerDown={(e) => {
+        if (selMode) return; // in selection mode a tap toggles, never re-presses
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        pressStart.current = { x: e.clientX, y: e.clientY };
+        firedRef.current = false;
+        pressTimer.current = window.setTimeout(() => {
+          pressTimer.current = null;
+          firedRef.current = true; // the following click must not open the sheet
+          onEnterSel(track.track_key);
+        }, LONG_PRESS_MS);
+      }}
+      onPointerMove={(e) => {
+        const s = pressStart.current;
+        if (!s) return;
+        // a drag is a scroll, not a press
+        if (Math.abs(e.clientX - s.x) + Math.abs(e.clientY - s.y) > DRAG_CANCEL_PX)
+          cancelPress();
+      }}
+      onPointerUp={cancelPress}
+      onPointerLeave={cancelPress}
+      onPointerCancel={cancelPress}
+      onContextMenu={(e) => e.preventDefault()}
       onClick={() => {
-        import("../theme").then((t) => t.haptic("light"));
+        if (firedRef.current) {
+          firedRef.current = false;
+          return;
+        }
+        if (selMode) {
+          haptic("light");
+          onToggleSel(track.track_key);
+          return;
+        }
+        haptic("light");
         onOpen(track, index);
       }}
     >
+      {selMode && (
+        <span className="tsel" aria-hidden="true">
+          {selected && <Icon name="circle-check" />}
+        </span>
+      )}
       <div className="coverwrap">
         <Cover track={track} />
         {track.duration ? <span className="dur num">{track.duration}</span> : null}
       </div>
       <div className="tt">{track.title}</div>
       <div className="ta">{track.artist || ""}</div>
+    </div>
+  );
+}
+
+/** The selection action bar (v2 §5.2): batch ops on the grid selection.
+ * Library context -> "Add to playlist…"; open playlist -> "Remove". Sits
+ * above the tab bar, and above the player bar when it is visible. */
+function SelBar({ m }: { m: import("../music").MusicApi }) {
+  return (
+    <div
+      className={"selbar" + (m.selPlayerVisible ? " above-pb" : "")}
+      id="sel-bar"
+      role="toolbar"
+      aria-label={COPY.selCount(m.selKeys.length)}
+    >
+      {m.selPlPick && (
+        <div className="selbar-pick" id="sel-picker">
+          {m.plList.length === 0 ? (
+            <span className="selbar-none">{COPY.playlistsEmpty}</span>
+          ) : (
+            m.plList.map((pl) => (
+              <button
+                key={pl.id}
+                type="button"
+                className="plpick"
+                data-pl={pl.id}
+                onClick={() => void m.onSelAddToPlaylist(pl.id)}
+              >
+                <span className="plpick-name">{pl.name}</span>
+                <span className="num">{pl.count}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+      <div className="selbar-row">
+        <span className="selcount num">{COPY.selCount(m.selKeys.length)}</span>
+        {m.plOpen ? (
+          <button
+            type="button"
+            className="btn danger-solid"
+            id="sel-remove"
+            onClick={() => void m.onSelRemoveFromPlaylist()}
+          >
+            <Icon name="trash" /> {COPY.remove}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn primary"
+            id="sel-add"
+            onClick={m.onSelOpenPicker}
+          >
+            <Icon name="plus" /> {COPY.addToPlaylist}
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn ghost"
+          id="sel-cancel"
+          onClick={m.onSelCancel}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -447,7 +573,16 @@ export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
                   </div>
                 ))
               : m.tracks.map((t, i) => (
-                  <Tile key={t.track_key} track={t} index={i} onOpen={m.onOpenTile} />
+                  <Tile
+                    key={t.track_key}
+                    track={t}
+                    index={i}
+                    onOpen={m.onOpenTile}
+                    selMode={m.selMode}
+                    selected={m.selKeys.includes(t.track_key)}
+                    onEnterSel={m.onSelEnter}
+                    onToggleSel={m.onSelToggle}
+                  />
                 ))}
           </div>
 
@@ -473,7 +608,16 @@ export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
                   </div>
                 ))
               : m.plTracks.map((t, i) => (
-                  <Tile key={t.track_key} track={t} index={i} onOpen={m.onOpenTile} />
+                  <Tile
+                    key={t.track_key}
+                    track={t}
+                    index={i}
+                    onOpen={m.onOpenTile}
+                    selMode={m.selMode}
+                    selected={m.selKeys.includes(t.track_key)}
+                    onEnterSel={m.onSelEnter}
+                    onToggleSel={m.onSelToggle}
+                  />
                 ))}
           </div>
 
@@ -491,6 +635,10 @@ export function MusicTab({ m, searchInput, onSearchInput }: MusicTabProps) {
           )}
         </>
       )}
+
+      {/* grid selection action bar (v2 §5.2): selMode is only reachable
+          from a tile long-press, and context switches clear it */}
+      {m.selMode && <SelBar m={m} />}
     </>
   );
 }

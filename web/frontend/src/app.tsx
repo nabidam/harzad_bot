@@ -146,13 +146,14 @@ export default function App() {
 
   // ---- sheet Escape-to-close (v1 document keydown) ---------------------------------
   // Now Playing is the top-most sheet: Escape closes it first, then the
-  // track sheet.
+  // track sheet, then leaves the grid selection mode.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const p = playerRef.current;
       if (p.nowPlayingOpen) p.closeNowPlaying();
       else if (musicLive.current.sheet) musicLive.current.sheetClose();
+      else if (musicLive.current.selMode) musicLive.current.onSelCancel();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

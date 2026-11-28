@@ -597,6 +597,34 @@ body.chat-on .playerbar{bottom:calc(var(--tab-h) + env(safe-area-inset-bottom) +
 }
 .confirmrow .minirow{margin-top:10px}
 
+/* ---- grid multi-select (v2 §5.2) ------------------------------------------- */
+.tile{position:relative;-webkit-touch-callout:none}
+.tile .tsel{
+  position:absolute;top:8px;left:8px;z-index:2;
+  width:24px;height:24px;border-radius:50%;
+  display:grid;place-items:center;
+  background:var(--surface);border:1.5px solid var(--line-2);
+  color:transparent;box-shadow:var(--shadow-1);
+  transition:background .15s,border-color .15s;
+}
+.tile .tsel .ico{width:14px;height:14px}
+.tile.sel .tsel{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.tile.sel .coverwrap{opacity:.72}
+.selbar{
+  position:fixed;left:12px;right:12px;z-index:40;
+  bottom:calc(var(--tab-h) + env(safe-area-inset-bottom) + 10px);
+  background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r-m);
+  box-shadow:var(--shadow-1);padding:10px 12px;
+  animation:tab-in .22s var(--ease);
+}
+.selbar.above-pb{bottom:calc(var(--tab-h) + env(safe-area-inset-bottom) + 74px)}
+.selbar-row{display:flex;align-items:center;gap:8px}
+.selcount{font-size:13px;font-weight:600;margin-right:auto}
+.selbar .btn{height:36px;font-size:13px;flex:none}
+.selbar-pick{display:flex;gap:7px;overflow-x:auto;padding:2px 2px 10px}
+.selbar-pick .plpick{flex:none;max-width:60vw}
+.selbar-none{font-size:13px;color:var(--text-3)}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{
     animation-duration:.01ms !important;
